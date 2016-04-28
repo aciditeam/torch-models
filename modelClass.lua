@@ -18,7 +18,7 @@ require 'mainLearning'
 -- Defining the main model class
 local modelClass = torch.class('modelClass');
 
---- This should construct the structure of the model
+--- This function defines the construction for the structure of a learning model
 --
 -- The code takes a particular network topology (given as a lua table)
 -- with a set of options and outputs a model compatible with nn.Module 
@@ -41,12 +41,17 @@ function modelClass:parametersSet(parameters)
 end
 
 -- Defines the structure of eventual pre-training model
-function modelClass:definePretraining()
+function modelClass:definePretraining(structure, l, options)
 end
 
 -- Function to perform unsupervised training on a sub-model
 function modelClass:unsupervisedTrain(model, unsupData, options)
   return unsupervisedTrain(model, unsupData, options);
+end
+
+-- Function to perform unsupervised testing on a sub-model
+function modelClass:unsupervisedTest(model, data, options)
+  return unsupervisedTest(model, data, options);
 end
 
 -- Function to perform supervised training on the full model
@@ -57,6 +62,16 @@ end
 -- Function to perform supervised testing on the model
 function modelClass:supervisedTest(model, data, options)
   return supervisedTest(model, data, options);
+end
+
+function modelClass:defineCriterion(model)
+  model:add(nn.LogSoftMax());
+  criterion = nn.ClassNLLCriterion();
+  return model, criterion;
+end
+
+function modelClass:getParameters(model)
+  return model:getParameters();
 end
 
 -- Transfer the weights from pre-training to the final model

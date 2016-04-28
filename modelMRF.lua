@@ -1,5 +1,11 @@
 -- graphical model lib
 require 'gm'
+local nninit = require 'nninit'
+
+local modelMRF, parent = torch.class('modelMRF', 'modelClass')
+  
+function modelMRF:defineModel(structure, options)
+end
 
 -- shortcuts
 local tensor = torch.Tensor
@@ -101,3 +107,46 @@ do
    local samples = g:sample('gibbs',5)
    print('<gm.testme> 5 samples from model (Gibbs):')
    print(samples)
+end
+
+function modelMRF:definePretraining(structure, l, options)
+  -- TODO
+  return model;
+end
+
+function modelMRF:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelMRF:weightsInitialize(model)
+  -- TODO
+  return model;
+end
+
+function modelMRF:weightsTransfer(model, trainedLayers)
+  -- TODO
+  return model;
+end
+
+function modelMRF:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelMRF:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
+end

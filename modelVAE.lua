@@ -1,9 +1,13 @@
 require 'torch'
 require 'nn'
+local nninit = require 'nninit'
 
-local VAE = {}
+local modelVAE, parent = torch.class('modelVAE', 'modelClass')
+  
+function modelVAE:defineModel(structure, options)
+end
 
-function VAE.get_encoder(input_size, hidden_layer_size, latent_variable_size)
+function modelVAE:get_encoder(input_size, hidden_layer_size, latent_variable_size)
      -- The Encoder
     local encoder = nn.Sequential()
     encoder:add(nn.Linear(input_size, hidden_layer_size))
@@ -18,7 +22,7 @@ function VAE.get_encoder(input_size, hidden_layer_size, latent_variable_size)
     return encoder
 end
 
-function VAE.get_decoder(input_size, hidden_layer_size, latent_variable_size, continuous)
+function modelVAE:get_decoder(input_size, hidden_layer_size, latent_variable_size, continuous)
     -- The Decoder
     local decoder = nn.Sequential()
     decoder:add(nn.Linear(latent_variable_size, hidden_layer_size))
@@ -35,6 +39,48 @@ function VAE.get_decoder(input_size, hidden_layer_size, latent_variable_size, co
     end
 
     return decoder
+end
+
+function modelVAE:definePretraining(structure, l, options)
+  -- TODO
+  return model;
+end
+
+function modelVAE:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelVAE:weightsInitialize(model)
+  -- TODO
+  return model;
+end
+
+function modelVAE:weightsTransfer(model, trainedLayers)
+  -- TODO
+  return model;
+end
+
+function modelVAE:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelVAE:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
 end
 
 --[[

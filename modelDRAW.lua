@@ -13,13 +13,14 @@ require 'nngraph'
 require 'unsup'
 require 'optim'
 require 'torch'
+local nninit = require 'nninit'
 
-modelDRAW = {};
+local modelDRAW, parent = torch.class('modelDRAW', 'modelClass')
 
 ----------------------------------------------------------------------
 -- Handmade DRAW
 ----------------------------------------------------------------------
-function modelDRAW.defineDRAW(n_features, rnn_size, params)
+function modelDRAW:defineModel(structure, options)
   local n_z = params.n_z or 100
   local n_canvas = params.n_canvas or n_features
   local seq_length = params.seq_length or 50
@@ -219,6 +220,48 @@ function modelDRAW.defineDRAW(n_features, rnn_size, params)
   decoder = nn.gModule({x, z, prev_c, prev_h, prev_canvas, ascending}, {x_prediction, x_error, next_c, next_h, next_canvas, loss_x})
   decoder.name = 'decoder'
   return encoder, decoder;
+end
+
+function modelDRAW:definePretraining(structure, l, options)
+  -- TODO
+  return model;
+end
+
+function modelDRAW:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelDRAW:weightsInitialize(model)
+  -- TODO
+  return model;
+end
+
+function modelDRAW:weightsTransfer(model, trainedLayers)
+  -- TODO
+  return model;
+end
+
+function modelDRAW:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelDRAW:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
 end
 
 --[[

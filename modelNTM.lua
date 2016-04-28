@@ -22,7 +22,7 @@
 
 --]]
 
-local NTM, parent = torch.class('ntm.NTM', 'nn.Module')
+local NTM, parent = torch.class('nn.NTM', 'nn.Module')
 
 function NTM:__init(config)
   self.input_dim   = config.input_dim   or error('config.input_dim must be specified')
@@ -452,4 +452,53 @@ end
 function NTM:zeroGradParameters()
   self.master_cell:zeroGradParameters()
   self.init_module:zeroGradParameters()
+end
+
+local nninit = require 'nninit'
+
+local modelNTM, parent = torch.class('modelNTM', 'modelClass')
+  
+function modelNTM:defineModel(structure, options)
+end
+
+function modelNTM:definePretraining(structure, l, options)
+  -- TODO
+  return model;
+end
+
+function modelNTM:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelNTM:weightsInitialize(model)
+  -- TODO
+  return model;
+end
+
+function modelNTM:weightsTransfer(model, trainedLayers)
+  -- TODO
+  return model;
+end
+
+function modelNTM:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelNTM:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
 end

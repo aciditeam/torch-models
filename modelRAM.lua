@@ -1,253 +1,338 @@
-require 'dp'
+----------------------------------------------------------------------
+--
+-- Deep time series learning: Analysis of Torch
+--
+-- Main functions for classification
+--
+----------------------------------------------------------------------
+
+----------------------------------------------------------------------
+-- Imports
 require 'rnn'
+require 'unsup'
+require 'optim'
+require 'torch'
+local nninit = require 'nninit'
 
--- References :
--- A. http://papers.nips.cc/paper/5542-recurrent-models-of-visual-attention.pdf
--- B. http://incompleteideas.net/sutton/williams-92.pdf
+modelRAM = {};
 
+------------------------------------------------------------------------
+--[[ TemporalGlimpse ]]--
+-- Similarly to spatial glimpses, a temporal glimpse is the concatenation 
+-- of down-scaled parts of a temporal process with increasing scale around 
+-- a given location in a time series.
+-- input is a pair of Tensors: {timeseries, location}
+-- locations are x,y coordinates of the center of cropped patches. 
+-- Coordinates are between -1,-1 (top-left) and 1,1 (bottom right)
+-- output is a batch of glimpses taken in image at location (x,y)
+-- glimpse size is {height, width}, or width only if square-shaped
+-- depth is number of patches to crop per glimpse (one patch per scale)
+-- Each successive patch is scale x size of the previous patch
+------------------------------------------------------------------------
+local TemporalGlimpse, parent = torch.class("nn.TemporalGlimpse", "nn.Module")
 
-version = 12
-
---[[command line arguments]]--
-cmd = torch.CmdLine()
-cmd:text()
-cmd:text('Train a Recurrent Model for Visual Attention')
-cmd:text('Example:')
-cmd:text('$> th rnn-visual-attention.lua > results.txt')
-cmd:text('Options:')
-cmd:option('--learningRate', 0.01, 'learning rate at t=0')
-cmd:option('--minLR', 0.00001, 'minimum learning rate')
-cmd:option('--saturateEpoch', 800, 'epoch at which linear decayed LR will reach minLR')
-cmd:option('--momentum', 0.9, 'momentum')
-cmd:option('--maxOutNorm', -1, 'max norm each layers output neuron weights')
-cmd:option('--cutoffNorm', -1, 'max l2-norm of contatenation of all gradParam tensors')
-cmd:option('--batchSize', 20, 'number of examples per batch')
-cmd:option('--cuda', false, 'use CUDA')
-cmd:option('--useDevice', 1, 'sets the device (GPU) to use')
-cmd:option('--maxEpoch', 2000, 'maximum number of epochs to run')
-cmd:option('--maxTries', 100, 'maximum number of epochs to try to find a better local minima for early-stopping')
-cmd:option('--transfer', 'ReLU', 'activation function')
-cmd:option('--uniform', 0.1, 'initialize parameters using uniform distribution between -uniform and uniform. -1 means default initialization')
-cmd:option('--xpPath', '', 'path to a previously saved model')
-cmd:option('--progress', false, 'print progress bar')
-cmd:option('--silent', false, 'dont print anything to stdout')
-
---[[ reinforce ]]--
-cmd:option('--rewardScale', 1, "scale of positive reward (negative is 0)")
-cmd:option('--unitPixels', 13, "the locator unit (1,1) maps to pixels (13,13), or (-1,-1) maps to (-13,-13)")
-cmd:option('--locatorStd', 0.11, 'stdev of gaussian location sampler (between 0 and 1) (low values may cause NaNs)')
-cmd:option('--stochastic', false, 'Reinforce modules forward inputs stochastically during evaluation')
-
---[[ glimpse layer ]]--
-cmd:option('--glimpseHiddenSize', 128, 'size of glimpse hidden layer')
-cmd:option('--glimpsePatchSize', 8, 'size of glimpse patch at highest res (height = width)')
-cmd:option('--glimpseScale', 2, 'scale of successive patches w.r.t. original input image')
-cmd:option('--glimpseDepth', 1, 'number of concatenated downscaled patches')
-cmd:option('--locatorHiddenSize', 128, 'size of locator hidden layer')
-cmd:option('--imageHiddenSize', 256, 'size of hidden layer combining glimpse and locator hiddens')
-
---[[ recurrent layer ]]--
-cmd:option('--rho', 7, 'back-propagate through time (BPTT) for rho time-steps')
-cmd:option('--hiddenSize', 256, 'number of hidden units used in Simple RNN.')
-cmd:option('--dropout', false, 'apply dropout on hidden neurons')
-
---[[ data ]]--
-cmd:option('--dataset', 'Mnist', 'which dataset to use : Mnist | TranslattedMnist | etc')
-cmd:option('--trainEpochSize', -1, 'number of train examples seen between each epoch')
-cmd:option('--validEpochSize', -1, 'number of valid examples used for early stopping and cross-validation') 
-cmd:option('--noTest', false, 'dont propagate through the test set')
-cmd:option('--overwrite', false, 'overwrite checkpoint')
-
-cmd:text()
-local opt = cmd:parse(arg or {})
-if not opt.silent then
-   table.print(opt)
+----------------------------------------------------------------------
+-- A real resampling function for time series
+----------------------------------------------------------------------
+local function tensorResampling(data, destSize, type)
+  -- Set the type of kernel
+  local type = type or 'gaussian'
+  -- Check properties of input data
+  if data:dim() == 1 then
+    data:resize(1, data:size(1));
+  end
+  -- Original size of input
+  inSize = data:size(2);
+  -- Construct a temporal convolution object
+  interpolator = nn.TemporalConvolution(inSize, destSize, 1, 1);
+  -- Zero-out the whole weights
+  interpolator.weight:zeros(destSize, inSize);
+  -- Lay down a set of kernels
+  for i = 1, destSize do
+    if type == 'gaussian' then
+      interpolator.weight[i] = image.gaussian1D(inSize, (1 / inSize), 1, true, i / destSize);
+    else
+      -- No handling of boundaries right now
+      for j = math.max({i-kernSize, 1}),math.min({i+kernSize,destSize}) do
+        -- Current position in kernel
+        relIdx = (j - i) / kernSize;
+        if type == 'bilinear' then
+          interpolator.weight[i][j] = 1 - math.abs(relIdx);
+        elseif type == 'hermite' then
+          interpolator.weight[i][j] = (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
+        elseif type == 'lanczos' then
+          interpolator.weight[i][j] = (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
+        end
+      end
+    end
+  end
+  -- print(interpolator.weight);
+  return interpolator:forward(data);
 end
 
-if opt.xpPath ~= '' then
-   -- check that saved model exists
-   assert(paths.filep(opt.xpPath), opt.xpPath..' does not exist')
+--function TemporalGlimpse:forget()
+--  print('Trying to forget recurrent interaction')
+--end
+
+function TemporalGlimpse:__init(size, depth, scale)
+   require 'nnx'
+   -- Keep inputs
+   self.size = size
+   self.depth = depth or 3
+   self.scale = scale or 2
+   -- Check validity
+   assert(torch.type(self.size) == 'number')
+   assert(torch.type(self.depth) == 'number')
+   assert(torch.type(self.scale) == 'number')
+   -- Perform init
+   parent.__init(self)
+   self.gradInput = {torch.Tensor(), torch.Tensor()}
+   -- Resampling operation
+   self.module = tensorResampling
+   self.type = 'gaussian'
+   --self.modules = {self.module}
 end
 
---[[data]]--
-if opt.dataset == 'TranslatedMnist' then
-   ds = torch.checkpoint(
-      paths.concat(dp.DATA_DIR, 'checkpoint/dp.TranslatedMnist.t7'),
-      function() return dp[opt.dataset]() end, 
-      opt.overwrite
-   )
-else
-   ds = dp[opt.dataset]()
-end
-
---[[Saved experiment]]--
-if opt.xpPath ~= '' then
-   if opt.cuda then
-      require 'optim'
-      require 'cunn'
-      cutorch.setDevice(opt.useDevice)
-   end
-   xp = torch.load(opt.xpPath)
-   if opt.cuda then
-      xp:cuda()
-   else
-      xp:float()
-   end
-   print"running"
-   xp:run(ds)
-   os.exit()
-end
-
---[[Model]]--
-
--- glimpse network (rnn input layer) 
-locationSensor = nn.Sequential()
-locationSensor:add(nn.SelectTable(2))
-locationSensor:add(nn.Linear(2, opt.locatorHiddenSize))
-locationSensor:add(nn[opt.transfer]())
-
-glimpseSensor = nn.Sequential()
-glimpseSensor:add(nn.DontCast(nn.SpatialGlimpse(opt.glimpsePatchSize, opt.glimpseDepth, opt.glimpseScale):float(),true))
-glimpseSensor:add(nn.Collapse(3))
-glimpseSensor:add(nn.Linear(ds:imageSize('c')*(opt.glimpsePatchSize^2)*opt.glimpseDepth, opt.glimpseHiddenSize))
-glimpseSensor:add(nn[opt.transfer]())
-
-glimpse = nn.Sequential()
-glimpse:add(nn.ConcatTable():add(locationSensor):add(glimpseSensor))
-glimpse:add(nn.JoinTable(1,1))
-glimpse:add(nn.Linear(opt.glimpseHiddenSize+opt.locatorHiddenSize, opt.imageHiddenSize))
-glimpse:add(nn[opt.transfer]())
-glimpse:add(nn.Linear(opt.imageHiddenSize, opt.hiddenSize))
-
--- rnn recurrent layer
-recurrent = nn.Linear(opt.hiddenSize, opt.hiddenSize)
-
--- recurrent neural network
-rnn = nn.Recurrent(opt.hiddenSize, glimpse, recurrent, nn[opt.transfer](), 99999)
-
-imageSize = ds:imageSize('h')
-assert(ds:imageSize('h') == ds:imageSize('w'))
-
--- actions (locator)
-locator = nn.Sequential()
-locator:add(nn.Linear(opt.hiddenSize, 2))
-locator:add(nn.HardTanh()) -- bounds mean between -1 and 1
-locator:add(nn.ReinforceNormal(2*opt.locatorStd, opt.stochastic)) -- sample from normal, uses REINFORCE learning rule
-assert(locator:get(3).stochastic == opt.stochastic, "Please update the dpnn package : luarocks install dpnn")
-locator:add(nn.HardTanh()) -- bounds sample between -1 and 1
-locator:add(nn.MulConstant(opt.unitPixels*2/ds:imageSize("h")))
-
-attention = nn.RecurrentAttention(rnn, locator, opt.rho, {opt.hiddenSize})
-
--- model is a reinforcement learning agent
-agent = nn.Sequential()
-agent:add(nn.Convert(ds:ioShapes(), 'bchw'))
-agent:add(attention)
-
--- classifier :
-agent:add(nn.SelectTable(-1))
-agent:add(nn.Linear(opt.hiddenSize, #ds:classes()))
-agent:add(nn.LogSoftMax())
-
--- add the baseline reward predictor
-seq = nn.Sequential()
-seq:add(nn.Constant(1,1))
-seq:add(nn.Add(1))
-concat = nn.ConcatTable():add(nn.Identity()):add(seq)
-concat2 = nn.ConcatTable():add(nn.Identity()):add(concat)
-
--- output will be : {classpred, {classpred, basereward}}
-agent:add(concat2)
-
-if opt.uniform > 0 then
-   for k,param in ipairs(agent:parameters()) do
-      param:uniform(-opt.uniform, opt.uniform)
-   end
-end
-
---[[Propagators]]--
-opt.decayFactor = (opt.minLR - opt.learningRate)/opt.saturateEpoch
-
-train = dp.Optimizer{
-   loss = nn.ParallelCriterion(true)
-      :add(nn.ModuleCriterion(nn.ClassNLLCriterion(), nil, nn.Convert())) -- BACKPROP
-      :add(nn.ModuleCriterion(nn.VRClassReward(agent, opt.rewardScale), nil, nn.Convert())) -- REINFORCE
-   ,
-   epoch_callback = function(model, report) -- called every epoch
-      if report.epoch > 0 then
-         opt.learningRate = opt.learningRate + opt.decayFactor
-         opt.learningRate = math.max(opt.minLR, opt.learningRate)
-         if not opt.silent then
-            print("learningRate", opt.learningRate)
+-- The temporal attention sensor will focus on a location at the x coord of the center of the output glimpse
+function TemporalGlimpse:updateOutput(inputTable)
+   assert(torch.type(inputTable) == 'table')
+   assert(#inputTable >= 2)
+   -- Separate the input and location 
+   local input, location = unpack(inputTable)
+   input, location = self:toBatch(input, 1), self:toBatch(location, 0)
+   --assert(input:dim() == 2 and location:dim() == 1)
+   -- Create the output (successive glimpses)
+   self.output:resize(input:size(1), self.depth, self.size)
+   -- Cropping and padding
+   self._crop = self._crop or self.output.new()
+   self._pad = self._pad or input.new()
+   -- For each sample in the batch
+   for sampleIdx=1,self.output:size(1) do
+      local outputSample = self.output[sampleIdx]
+      local inputSample = input[sampleIdx]
+      local pos = location[sampleIdx]
+      -- (-1) far left, (1) far right of a time series, rescale to [0, 1]
+      pos = (pos[1] + 1) / 2
+      -- For each depth of glimpse : pad, crop, downscale
+      local glimpseSize = self.size
+      for depth=1,self.depth do 
+         local dst = outputSample[depth]
+         -- Factor to which we will crop and rescale
+         if depth > 1 then glimpseSize = glimpseSize * self.scale end
+         -- Add zero padding (glimpse could be partially out of bounds)
+         local padSize = math.floor((glimpseSize - 1) / 2)
+         -- Create a tensor of zeros (padding)
+         self._pad:resize(1, input:size(2) + padSize * 2):zero()
+         local center = self._pad:narrow(2, padSize + 1, input:size(2));
+         center:copy(inputSample)
+         -- Crop it
+         local h = self._pad:size(2) - glimpseSize;
+         local x = math.min(h, math.max(0, pos * h));
+         -- At first depth, no downscaling
+         if depth == 1 then
+            dst:copy(self._pad:narrow(2, x + 1, glimpseSize));
+         else
+            self._crop:resize(1, glimpseSize)
+            self._crop:copy(self._pad:narrow(2, x + 1, glimpseSize))
+            -- Finally resample the cropped tensor
+            dst:copy(tensorResampling(self._crop, self.size, 'gaussian'));
          end
       end
-   end,
-   callback = function(model, report)       
-      if opt.cutoffNorm > 0 then
-         local norm = model:gradParamClip(opt.cutoffNorm) -- affects gradParams
-         opt.meanNorm = opt.meanNorm and (opt.meanNorm*0.9 + norm*0.1) or norm
-         if opt.lastEpoch < report.epoch and not opt.silent then
-            print("mean gradParam norm", opt.meanNorm)
+   end
+   -- Finally resize the output
+   self.output:resize(input:size(1), self.depth, self.size)
+   self.output = self:fromBatch(self.output, 1)
+   return self.output
+end
+
+function TemporalGlimpse:updateGradInput(inputTable, gradOutput)
+   -- Separate the input and location 
+   local input, location = unpack(inputTable)
+   input, location = self:toBatch(input, 1), self:toBatch(location, 0)
+   -- Prepare the gradient sizes to match the input 
+   local gradInput, gradLocation = unpack(self.gradInput)
+   gradOutput = self:toBatch(gradOutput, 1)
+   gradInput:resizeAs(input):zero()
+   gradLocation:resizeAs(location):zero() -- no backprop through location
+   -- Prepare the gradient w.r.t the output
+   gradOutput = gradOutput:view(input:size(1), self.depth, self.size)
+   for sampleIdx=1,self.output:size(1) do
+      local gradOutputSample = gradOutput[sampleIdx]
+      local gradInputSample = gradInput[sampleIdx]
+      local pos = location[sampleIdx]
+      -- (-1) far left, (1) far right of a time series, rescale to [0, 1]
+      pos = (pos[1] + 1) / 2
+      -- For each depth of glimpse : pad, crop, downscale
+      local glimpseSize = self.size
+      for depth=1,self.depth do 
+         local src = gradOutputSample[depth]
+         -- Factor to which we will crop and rescale
+         if depth > 1 then glimpseSize = glimpseSize * self.scale end
+         -- Add zero padding (glimpse could be partially out of bounds)
+         local padSize = math.floor((glimpseSize - 1) / 2)
+         -- Create a tensor of zeros (padding)
+         self._pad:resize(1, input:size(2) + padSize * 2):zero()
+         -- Crop it
+         local h = self._pad:size(2) - glimpseSize;
+         local x = math.min(h, math.max(0, pos * h));
+         local pad = self._pad:narrow(2, x + 1, glimpseSize)
+         -- At first depth, no downscaling
+         if depth == 1 then
+            pad:copy(src);
+         else
+            self._crop:resize(1, glimpseSize)
+            -- Finally copy the derivative of the resampling ! NOT DONE
+            -- ad:copy(gradInput(tensorResampling(self._crop, self.size, 'gaussian')));
          end
+         gradInputSample:add(self._pad:narrow(2, padSize+1, input:size(2)))
       end
-      model:updateGradParameters(opt.momentum) -- affects gradParams
-      model:updateParameters(opt.learningRate) -- affects params
-      model:maxParamNorm(opt.maxOutNorm) -- affects params
-      model:zeroGradParameters() -- affects gradParams 
-   end,
-   feedback = dp.Confusion{output_module=nn.SelectTable(1)},  
-   sampler = dp.ShuffleSampler{
-      epoch_size = opt.trainEpochSize, batch_size = opt.batchSize
-   },
-   progress = opt.progress
-}
-
-
-valid = dp.Evaluator{
-   feedback = dp.Confusion{output_module=nn.SelectTable(1)},  
-   sampler = dp.Sampler{epoch_size = opt.validEpochSize, batch_size = opt.batchSize},
-   progress = opt.progress
-}
-if not opt.noTest then
-   tester = dp.Evaluator{
-      feedback = dp.Confusion{output_module=nn.SelectTable(1)},  
-      sampler = dp.Sampler{batch_size = opt.batchSize} 
-   }
+   end
+   -- Finally set the gradients
+   self.gradInput[1] = self:fromBatch(gradInput, 1)
+   self.gradInput[2] = self:fromBatch(gradLocation, 0)
+   return self.gradInput
 end
 
---[[Experiment]]--
-xp = dp.Experiment{
-   model = agent,
-   optimizer = train,
-   validator = valid,
-   tester = tester,
-   observer = {
-      ad,
-      dp.FileLogger(),
-      dp.EarlyStopper{
-         max_epochs = opt.maxTries, 
-         error_report={'validator','feedback','confusion','accuracy'},
-         maximize = true
-      }
-   },
-   random_seed = os.time(),
-   max_epoch = opt.maxEpoch
-}
+local modelRAM, parent = torch.class('modelRAM', 'modelRNN')
 
---[[GPU or CPU]]--
-if opt.cuda then
-   require 'cutorch'
-   require 'cunn'
-   cutorch.setDevice(opt.useDevice)
-   xp:cuda()
+function modelRAM:defineModel(structure, options)
+  -- Container
+  local model = nn.Sequential();
+  --[[ Glimpse network (rnn input layer) ]]--
+  -- Location sensor 
+  locationSensor = nn.Sequential()
+  locationSensor:add(nn.SelectTable(2))
+  locationSensor:add(nn.Linear(1, self.locatorHiddenSize))
+  locationSensor:add(self.nonLinearity())
+  -- Glimpse sensor
+  glimpseSensor = nn.Sequential()
+  glimpseSensor:add(nn.TemporalGlimpse(self.glimpseSize, self.glimpseDepth, self.glimpseScale))
+  --glimpseSensor:add(nn.Collapse(3))
+  glimpseSensor:add(nn.Reshape(self.glimpseSize * self.glimpseDepth));
+  glimpseSensor:add(nn.Linear(self.glimpseSize * self.glimpseDepth, self.glimpseHiddenSize))
+  glimpseSensor:add(self.nonLinearity())
+  -- Complete glimpse network
+  glimpse = nn.Sequential();
+  glimpse:add(nn.ConcatTable():add(locationSensor):add(glimpseSensor));
+  glimpse:add(nn.JoinTable(1,1));
+  glimpse:add(nn.Linear(self.glimpseHiddenSize + self.locatorHiddenSize, self.imageHiddenSize));
+  glimpse:add(self.nonLinearity());
+  glimpse:add(nn.Linear(self.imageHiddenSize, self.hiddenSize));
+  -- Rnn recurrent layer
+  recurrent = nn.Linear(self.hiddenSize, self.hiddenSize);
+  -- Recurrent neural network
+  rnn = nn.Recurrent(self.hiddenSize, glimpse, recurrent, self.nonLinearity(), 99999)
+  seriesSize = structure.nInputs
+  -- actions (locator)
+  locator = nn.Sequential()
+  locator:add(nn.Linear(self.hiddenSize, 1))
+  locator:add(nn.HardTanh()) -- bounds mean between -1 and 1
+  locator:add(nn.ReinforceNormal(2*self.locatorStd, self.stochastic)) -- sample from normal, uses REINFORCE learning rule
+  assert(locator:get(3).stochastic == self.stochastic, "Please update the dpnn package : luarocks install dpnn")
+  locator:add(nn.HardTanh()) -- bounds sample between -1 and 1
+  --locator:add(nn.MulConstant(self.unitPixels*2 / seriesSize))
+  -- Final recurrent attention model
+  attention = nn.RecurrentAttention(rnn, locator, self.rho, {self.hiddenSize})
+  -- model is a reinforcement learning agent
+  agent = nn.Sequential()
+  -- agent:add(nn.Convert(ds:ioShapes(), 'bchw'))
+  agent:add(attention)
+  -- classifier :
+  agent:add(nn.SelectTable(-1))
+  agent:add(nn.Linear(self.hiddenSize, structure.nOutputs))
+  agent:add(nn.LogSoftMax())
+  -- add the baseline reward predictor
+  seq = nn.Sequential()
+  seq:add(nn.Constant(1,1))
+  seq:add(nn.Add(1))
+  concat = nn.ConcatTable():add(nn.Identity()):add(seq)
+  concat2 = nn.ConcatTable():add(nn.Identity()):add(concat)
+  -- output will be : {classpred, {classpred, basereward}}
+  agent:add(concat2)
+  return agent;
 end
 
-xp:verbose(not opt.silent)
-if not opt.silent then
-   print"Agent :"
-   print(agent)
+function modelRAM:definePretraining(structure, l, options)
+  local model = {};
+  -- Return the complete model
+  return model;
 end
 
-xp.opt = opt
+function modelRAM:retrieveEncodingLayer(model)
+  -- Retrieve only the encoding layer 
+  local encoder = model.encoder
+  return encoder
+end
 
-xp:run(ds)
+function modelRAM:defineCriterion(model)
+  local loss = nn.ParallelCriterion(true);
+  loss:add(nn.ModuleCriterion(nn.ClassNLLCriterion(), nil, nn.Convert())) -- BACKPROP
+  loss:add(nn.ModuleCriterion(nn.VRClassReward(model, self.rewardScale), nil, nn.Convert())) -- REINFORCE
+  return model, loss;
+end
+  
+function modelRAM:weightsInitialize(model)
+  -- Initialize the batch normalization layers
+  for k,v in pairs(model:findModules('nn.BatchNormalization')) do
+    v.weight:fill(1)
+    v.bias:zero()
+  end
+  -- Find only the linear modules (including LSTM's)
+  --linearNodes = model:findModules('nn.Linear')
+  --for l = 1,#linearNodes do
+  --  module = linearNodes[l];
+  --  module:init('weight', self.initialize);
+  --  module:init('bias', self.initialize);
+  --end
+  return model;
+end
+
+function modelRAM:weightsTransfer(model, trainedLayers)
+  -- Find both LSTM and linear modules
+  linearNodes = model:findModules('nn.Linear');
+  -- Current linear layer
+  local curLayer = 1;
+  for l = 1,#trainedLayers do
+    -- Find equivalent in pre-trained layer
+    lstmNodes = trainedLayers[l].encoder:findModules('nn.Linear');
+    for k = 1,#lstmNodes do
+      linearNodes[curLayer].weights = lstmNodes[k].weight;
+      linearNodes[curLayer].bias = lstmNodes[k].bias;
+      curLayer = curLayer + 1;
+    end
+  end
+  return model;
+end
+
+function modelRAM:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.addNonLinearity = true;
+  self.layerwiseLinear = true;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  --[[ reinforce ]]--
+  self.rewardScale = 1;           -- scale of positive reward (negative is 0)
+  self.unitPixels = 62;            -- locator unit (1,1) maps to pixels (13,13), or (-1,-1) maps to (-13,-13)
+  self.locatorStd = 0.11;         -- stdev of gaussian location sampler (between 0 and 1) (low values may cause NaNs)
+  self.stochastic = false;        -- reinforce modules forward inputs stochastically during evaluation
+  --[[ glimpse layer ]]--
+  self.glimpseHiddenSize = 128    -- size of glimpse hidden layer
+  self.glimpseSize = 32           -- size of glimpse at highest granularity
+  self.glimpseScale = 1.5         -- scale of successive glimpses w.r.t. original dimensionality
+  self.glimpseDepth = 4           -- number of concatenated downscaled patches
+  self.locatorHiddenSize = 128    -- size of locator hidden layer
+  self.imageHiddenSize = 256      -- size of hidden layer combining glimpse and locator hiddens
+  --[[ recurrent layer ]]--
+  self.rho = 7                    -- back-propagate through time (BPTT) for rho time-steps
+  self.hiddenSize = 256           -- number of hidden units used in Simple RNN
+  self.pretrain = false;
+  self.windowSize = 16;
+  self.windowStep = 1;
+  self.dropout = 0.5;
+end
+
+function modelRAM:parametersRandom()
+  -- All possible non-linearities
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+end

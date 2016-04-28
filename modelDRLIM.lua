@@ -13,13 +13,14 @@ require 'nngraph'
 require 'unsup'
 require 'optim'
 require 'torch'
+local nninit = require 'nninit'
 
-modelDRLIM = {};
+local modelDRLIM, parent = torch.class('modelDRLIM', 'modelSiamese')
 
 ----------------------------------------------------------------------
 -- Handmade DRLIM
 ----------------------------------------------------------------------
-function modelDRLIM.defineDRLIM(in_size, network_dim, params)
+function modelDRLIM:defineModel(structure, options)
   
   --Encoder 
   local encoder = nn.Sequential()
@@ -44,9 +45,6 @@ function modelDRLIM.defineDRLIM(in_size, network_dim, params)
   -- Create the L2 distance function and add it to the full network
   local dist = nn.PairwiseDistance(2)
   model:add(dist)
-
-  model:cuda()
-
   -- Criterion
   local criterion = nn.HingeEmbeddingCriterion(margin):cuda() 
 
@@ -57,42 +55,44 @@ function modelDRLIM.defineDRLIM(in_size, network_dim, params)
   return model, criterion, encoder;
 end
 
---[[
-train = function()
-  local point_pairs = gen_epoch_data(kNN,M)
-  local av_error = 0 
-  local nsamples = 0
-
-  for i = 1,point_pairs:size(1) do
-    if (math.mod(i,100)==0 or i == point_pairs:size(1)) then 
-      progress(i,point_pairs:size(1))
-    end
-    
-    if (point_pairs[i][1]~=0 and point_pairs[i][2]~=0 and
-         point_pairs[i][1]~=point_pairs[i][2]) then
-      local data = {torch.FloatTensor(im_size), torch.FloatTensor(im_size)}
-      data[1] = X[ point_pairs[i][1] ]:cuda()
-      data[2] = X[ point_pairs[i][2] ]:cuda()
-      local target = point_pairs[i][3]
-
-      local feval = function(x)
-        gradParameters:zero()
-        local pred = model:forward(data)
-        local err = criterion:forward(pred, target)
-        av_error = av_error + err
-        local grad = criterion:backward(pred, target)
-        model:backward(data, grad)
-        return err, gradParameters
-      end
-
-      -- optimize on current sample
-      optimMethod(feval, parameters, optimState)
-
-      nsamples = nsamples + 1
-    end
-  end
-   
-  av_error = av_error / nsamples 
-  return av_error  
+function modelDRLIM:definePretraining(structure, l, options)
+  -- TODO
+  return model;
 end
---]]
+
+function modelDRLIM:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelDRLIM:weightsInitialize(model)
+  -- TODO
+  return model;
+end
+
+function modelDRLIM:weightsTransfer(model, trainedLayers)
+  -- TODO
+  return model;
+end
+
+function modelDRLIM:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelDRLIM:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
+end

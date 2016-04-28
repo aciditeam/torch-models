@@ -12,66 +12,25 @@ require 'torch'
 require 'nn'
 local nninit = require 'nninit'
 
-local modelSiamese, parent = torch.class('modelSiamese', 'modelClass')
+local modelSiameseProduct, parent = torch.class('modelSiameseProduct', 'modelSiamese')
 
-function modelSiamese:defineSimple(structure, options)
-  -- Handle the use of CUDA
-  if options.cuda then local nn = require 'cunn' else local nn = require 'nn' end
-  -- Use our pre-defined model
-  local curModel = modelMLP();
-  -- Define baseline parameters
-  curModel:parametersDefault();
-  curModel.batchNormalize = false;
-  -- Embedding layers
-  local embedding = curModel:defineModel(structure, options);
-  -- Encoding layer - go from the n-class out to 2-dimensional encoding
-  --embedding:add(nn.Linear(structure.nOutputs, 2));
-  --embedding:add(nn.Reshape(1, 2));
-  curModel:weightsInitialize(embedding);
-  return embedding
-end
-
-function modelSiamese:defineConvolutional(structure, options)
-  -- Handle the use of CUDA
-  if options.cuda then local nn = require 'cunn' else local nn = require 'nn' end
-  -- Use our pre-defined model
-  local curModel = modelCNN();
-  -- Define baseline parameters
-  curModel:parametersDefault();
-  curModel.batchNormalize = false;
-  -- Embedding layers
-  local embedding = nn.Sequential()
-  embedding:add(nn.Reshape(1, structure.nInputs, 1))
-  local convNet = curModel:defineModel(structure, options);
-  -- A bit of torch kung-fu
-  convNet:remove(1);
-  embedding:add(convNet);
-  embedding:add(nn.Transpose({1,2}));
-  embedding:add(nn.View(structure.nOutputs));
-  -- Encoding layer - go from the n-class out to 2-dimensional encoding
-  --embedding:add(nn.Linear(structure.nOutputs, 2));
-  --embedding:add(nn.Reshape(1, 2));
-  curModel:weightsInitialize(convNet);
-  return embedding
-end
-
-function modelSiamese:defineGeneric(structure, options)
-end
-
-function modelSiamese:defineModel(structure, options)
+function modelSiameseProduct:defineModel(structure, options)
   -- Define a single network
-  local encoder = self:defineConvolutional(structure, options);
+  local encoder = self:defineSimple(structure, options);
   -- Turn it into a siamese model (input splits on 1st dimension)
   local siamese_encoder = nn.ParallelTable()
   siamese_encoder:add(encoder)
   -- Clone the encoder and share the weight, bias (must also share the gradWeight and gradBias)
-  siamese_encoder:add(encoder:clone('weight','bias', 'gradWeight','gradBias'))
-  --The siamese model (inputs will be Tensors of shape (2, channel, height, width))
-  local model = nn.Sequential()
-  -- Add the siamese encoder
-  model:add(siamese_encoder)
-  -- L2 pariwise distance
-  model:add(nn.PairwiseDistance(2))
+  siamese_encoder:add(encoder:clone('weight', 'bias', 'gradWeight', 'gradBias'))
+  -- Enclose the first siamese parallel (for dot product)
+  local dotEncoder = nn.Sequential()
+  dotEncoder:add(siamese_encoder)
+  dotEncoder:add(nn.DotProduct())
+  local dotClone = dotEncoder:clone('weight', 'bias', 'gradWeight', 'gradBias');
+  -- The siamese model (of siamese models !)
+  local dotParallel = nn.ParallelTable()
+  dotParallel:add(dotEncoder);
+  dotParallel:add(dotClone);
   -- Create a 3rd pathway for a classifier
   local classEncoder = encoder:clone('weight','bias', 'gradWeight','gradBias');
   -- Add a linear layer for logistic regression
@@ -79,22 +38,22 @@ function modelSiamese:defineModel(structure, options)
   classEncoder:add(nn.LogSoftMax())
   -- Final full model
   local fullModel = nn.ParallelTable();
-  fullModel:add(model);
+  fullModel:add(dotParallel);
   fullModel:add(classEncoder);
   return fullModel
 end
 
-function modelSiamese:defineCriterion(model)
+function modelSiameseProduct:defineCriterion(model)
   local margin = 1;
   local loss = nn.ParallelCriterion();
-  loss:add(nn.HingeEmbeddingCriterion(margin));
-  -- nn.MarginRankingCriterion(margin)
+  --oss:add(nn.HingeEmbeddingCriterion(margin));
+  loss:add(nn.MarginRankingCriterion(margin))
   loss:add(nn.ClassNLLCriterion());
   return model, loss;
 end
 
 -- Function to perform supervised training on the full model
-function modelSiamese:supervisedTrain(model, trainData, options)
+function modelSiameseProduct:supervisedTrain(model, trainData, options)
   -- epoch tracker
   epoch = epoch or 1
   -- time variable
@@ -125,13 +84,26 @@ function modelSiamese:supervisedTrain(model, trainData, options)
       -- load first sample
       local i1 = trainData.data[shuffle[i]]
       local t1 = trainData.labels[shuffle[i]]
-      for j = i+1, mId do
+      for j = i+1,mId do
         -- load second sample
         local i2 = trainData.data[shuffle[j]]
         local t2 = trainData.labels[shuffle[j]]
-        inputs[k] = {{i1, i2}, i2};
-        targets[k] = {((t1 == t2) and 1 or -1), t2};
-        k = k + 1
+        -- Find a non-matching pair
+        for l = t,mId do
+          -- load second sample
+          local i3 = trainData.data[shuffle[l]]
+          local t3 = trainData.labels[shuffle[l]]
+          if ((t1 == t2) and (t1 ~= t3)) then
+            inputs[k] = {{{i1, i2}, {i1, i3}}, i1};
+            targets[k] = {-1, t1};
+            k = k + 1
+          end
+          if ((t1 ~= t2) and (t1 == t3)) then
+            inputs[k] = {{{i1, i2}, {i1, i3}}, i1};
+            targets[k] = {1, t1};
+            k = k + 1
+          end 
+        end
       end
     end
     if options.type == 'double' then inputs = inputs:double() end
@@ -197,7 +169,7 @@ end
 -- Function to perform supervised testing on the model
 --
 ------------------------------------------
-function modelSiamese:supervisedTest(modelOrig, testData, options)
+function modelSiameseProduct:supervisedTest(modelOrig, testData, options)
   -- local vars
   local time = sys.clock()
   -- adjust the batch size (needs at least 2 examples)
@@ -257,29 +229,29 @@ function modelSiamese:supervisedTest(modelOrig, testData, options)
   return (1 - confusion.totalValid);
 end
 
-function modelSiamese:definePretraining(structure, l, options)
+function modelSiameseProduct:definePretraining(structure, l, options)
   -- TODO
   return model;
 end
 
-function modelSiamese:retrieveEncodingLayer(model)
+function modelSiameseProduct:retrieveEncodingLayer(model)
   -- Here simply return the encoder
   encoder = model.encoder
   encoder:remove();
   return model.encoder;
 end
 
-function modelSiamese:weightsInitialize(model)
+function modelSiameseProduct:weightsInitialize(model)
   -- TODO
   return model;
 end
 
-function modelSiamese:weightsTransfer(model, trainedLayers)
+function modelSiameseProduct:weightsTransfer(model, trainedLayers)
   -- TODO
   return model;
 end
 
-function modelSiamese:parametersDefault()
+function modelSiameseProduct:parametersDefault()
   self.initialize = nninit.xavier;
   self.nonLinearity = nn.ReLU;
   self.batchNormalize = true;
@@ -288,7 +260,7 @@ function modelSiamese:parametersDefault()
   self.dropout = 0.5;
 end
 
-function modelSiamese:parametersRandom()
+function modelSiameseProduct:parametersRandom()
   -- All possible non-linearities
   self.distributions = {};
   self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};

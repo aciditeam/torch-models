@@ -8,9 +8,9 @@
 --]]
 local _ = require 'moses'
 require 'nn'
-require 'dpnn'
+--require 'dpnn'
 require 'rnn'
-require 'extracunn'
+--require 'extracunn'
 
 local ConvLSTM, parent = torch.class('nn.ConvLSTM', 'nn.AbstractRecurrent')
 

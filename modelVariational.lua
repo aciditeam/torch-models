@@ -10,11 +10,8 @@
 -- Imports
 require 'nn'
 require 'nngraph'
-require 'cunn'
-require 'cutorch'
 require "optim"
-
-modelVariational = {};
+local nninit = require 'nninit'
 
 local GaussianReparam, parent = torch.class('nn.GaussianReparam', 'nn.Module')
 --Based on JoinTable
@@ -64,6 +61,8 @@ function GaussianReparam:updateGradInput(input, gradOutput)
     return self.gradInput
 end
 
+local modelVariational, parent = torch.class('modelVariational', 'modelClass')
+
 ----------------------------------------------------------------------
 -- Deep Generative Model trained using Stochastic Backpropagation
 -- References :
@@ -72,7 +71,7 @@ end
 -- Stochastic Backpropagation and Approximate Inference in Deep Generative Models
 -- http://arxiv.org/abs/1401.4082
 ----------------------------------------------------------------------
-function modelVariational.defineVariational(dim_input, dim_hidden, params)
+function modelVariational:defineModel(structure, options)
   ---------------- Model Params. -----------
   local dim_stochastic = params.dim_stochastic or 100
   local nonlinearity   = params.nonlinearity or nn.ReLU
@@ -102,6 +101,66 @@ function modelVariational.defineVariational(dim_input, dim_hidden, params)
   --criterion = nn.BCECriterion()
   --criterion.sizeAverage = false
   return mlp; --criterion;
+end
+
+function modelVariational:definePretraining(structure, l, options)
+  -- TODO
+  return model;
+end
+
+function modelVariational:retrieveEncodingLayer(model) 
+  -- Here simply return the encoder
+  encoder = model.encoder
+  encoder:remove();
+  return model.encoder;
+end
+
+function modelVariational:weightsInitialize(model)
+  -- Find only the linear modules
+  linearNodes = model:findModules('nn.Linear')
+  for l = 1,#linearNodes do
+    module = linearNodes[l];
+    module:init('weight', self.initialize);
+    module:init('bias', self.initialize);
+  end
+  return model;
+end
+
+function modelVariational:weightsTransfer(model, trainedLayers)
+  -- Find only the linear modules
+  linearNodes = model:findModules('nn.Linear')
+  for l = 1,#trainedLayers do
+    -- Find equivalent in pre-trained layer
+    preTrained = trainedLayers[l].encoder:findModules('nn.Linear');
+    linearNodes[l].weight = preTrained[1].weight;
+    linearNodes[l].bias = preTrained[1].bias;
+  end
+  -- Initialize the batch normalization layers
+  for k,v in pairs(model:findModules('nn.BatchNormalization')) do
+    v.weight:fill(1)
+    v.bias:zero()
+  end
+  return model;
+end
+
+function modelVariational:parametersDefault()
+  self.initialize = nninit.xavier;
+  self.nonLinearity = nn.ReLU;
+  self.batchNormalize = true;
+  self.pretrainType = 'ae';
+  self.pretrain = true;
+  self.dropout = 0.5;
+end
+
+function modelVariational:parametersRandom()
+  -- All possible non-linearities
+  self.distributions = {};
+  self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU};
+  self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse};
+  self.distributions.batchNormalize = {true, false};
+  self.distributions.pretrainType = {'ae', 'psd'};
+  self.distributions.pretrain = {true, false};
+  self.distributions.dropout = {0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
 end
 
 --[[

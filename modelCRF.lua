@@ -1,5 +1,11 @@
 -- graphical model lib
 require 'gm'
+local nninit = require 'nninit'
+
+local modelCRF, parent = torch.class('modelCRF', 'modelClass')
+
+function modelCRF:defineModel(structure, options)
+end
 
 -- shortcuts
 local tensor = torch.Tensor

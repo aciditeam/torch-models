@@ -1,12 +1,96 @@
-
-require 'rnn'
+require 'torch'
 require 'nn'
+require 'rnn'
 require 'importTSDataset'
+require 'mainVisualize'
+
+
+
+print("yop");
+
+local nninit = require 'nninit'
+
+testi = nn.Linear(100, 200):init('weight', nninit.kaiming);
+
+plot = Plot():histogram(testi.weight:reshape(100 * 200)):draw()
+--plot = Plot():histogram(testi.gradParams:reshape(100 * 200)):draw()
+--plot:save('check.html');
+--os.execute('open check.html');
+
+plots = {}
+-- segment plots
+x1=torch.randn(10)
+y1=torch.randn(10)
+plots[1] = Plot():segment(x1, y1, x1+10,y1+10, 'red','demo'):title('Segment Plot Demo')
+-- quiver plots
+U = torch.randn(3,3):mul(100)
+V = torch.randn(3,3):mul(100)
+plots[2] = Plot():quiver(U,V,'red',''):title('Quiver Plot Demo')
+--html = multiPlot(plots);
+
+--sidvb:poy()
+
+--plot:save('out2.html')
+--os.execute('open out2.html')
+-- quads/rectangles
+--x1=torch.randn(10)
+--y1=torch.randn(10)
+--plot = Plot():quad(x1,y1,x1+1,y1+1,'red',''):draw()
+
+--[[
+-- histogram
+plot = Plot():histogram(torch.randn(10000)):draw()
+local t = torch.Tensor
+local y = t(10)
+local x = t(y:size()):zero()
+local labels = {}
+for i = 1, 10 do
+    y[i] = i
+    labels[i] = tostring(i)
+end
+
+Plot()
+  :circle(x, y, 'red', nil, {foo=labels})
+  :hover_tool({{'xy', '@x @y'}, {'foo', '@foo'}})
+  :draw()
+  
+local t = torch.Tensor
+local y = t(10)
+local x = t(y:size()):zero()
+local labels = {}
+for i = 1, 10 do
+    y[i] = i
+    labels[i] = tostring(i)
+end
+
+Plot():gscatter(x, y)
+  :text(x, y, labels, y, 'black')
+  :triangle(x, y, 'blue')
+  :draw()
+
+]]--
 
 baseDir = '/Users/esling/Dropbox/TS_Datasets';
-setList = {'ArrowHead','Beef','BeetleFly','BirdChicken'};
-local sets = import_data(baseDir, setList, 128);
-print(sets['ArrowHead']["TRAIN"].data[1]);
+setList = {'ArrowHead'};
+local sets = import_data(baseDir, setList);
+--testiSeries = {};
+--i = 1;
+--for v,n in ipairs({16,32,50,64,100,128,200,256,333,512,1024,2048,4096,8192}) do
+--  testiSeries[i] = tensorResampling(sets['Beef']['TRAIN'].data[5]:double(), n, 'gaussian');
+--  testiSeries[i]:resize(n);
+--  i = i + 1;
+--end
+series = sets['ArrowHead']['TRAIN'].data[{4, {}}]:reshape(1, 251);
+print(series);
+loc = torch.Tensor{0.6, -0.5};
+print(loc);
+tg = nn.TemporalGlimpse(16, 8, 1.5);
+testiSeries = tg:forward{series, loc};
+print(testiSeries);
+--tg:backward({series, loc}, testiSeries)
+print(testiSeries)
+plotMultipleTimeSeries(testiSeries[1]);
+zeiury:zeoiru();
 inputFrameSize = 1;
 outputFrameSize = 10;
 kW = 16; dW = 1;
@@ -26,10 +110,21 @@ model:add(nn.Dropout(0.25));
 --  model:get(3).weight[{i, i}] = 1;
 --end
 --model.bias = torch.zeros(20, 1);
-x=torch.rand(128, 10):double();
+x = sets['ArrowHead']["TRAIN"].data[1]
+print(x);
 
-   
-   -- build simple recurrent neural network
+
+
+testiPote = nn.SlidingWindow(1, 16, 1, 1e9, false);
+check = testiPote:forward(x);
+--plotMultipleTimeSeries(check);
+--plotMultipleTimeSeries(sets['ArrowHead']["TRAIN"].data)
+--for i = 1,#check do
+--  plotTS(check[i]);
+--end
+
+sidvb:poy()
+
 local r = nn.Recurrent(
    100, 
    nn.Linear(1, 100), 
@@ -90,7 +185,7 @@ if opt.cuda then
 end         
 
 -- Keep the input layer small so the model trains / converges quickly while training
-local inputSize = 128
+local inputSize = 2
 -- Larger numbers here mean more complex problems can be solved, but can also over-fit. 256 works well for now
 local hiddenSize = 512
 -- We want the network to classify the inputs using a one-hot representation of the outputs
@@ -100,7 +195,7 @@ local outputSize = 3
 local dsSize=2000
 
 -- We present the dataset to the network in batches where batchSize << dsSize
-local batchSize=128
+local batchSize=64
 
 --And seqLength is the length of each sequence, i.e. the number of "events" we want to pass to the LSTM
 --to make up a single example. I'd like this to be dynamic ideally for the YOOCHOOSE dataset..
@@ -202,7 +297,15 @@ for numEpochs=0,500,1 do
       -- currT = torch.toc(start)
       -- print('rnn:forward in ', currT .. 's')
       -- start = torch.tic()
-      err = err + seqC:forward(out, batchTargets)
+      
+      print(out);
+      print(batchInputs);
+      print(batchTargets[1]:reshape(1, 64));
+      print(batchTargets[2]:reshape(1, 64));
+      print(batchTargets[3]:reshape(1, 64));
+      --print(torch.cat(batchTargets[1], batchTargets[2], batchTargets[3]));
+      print(seqC:forward(out, batchTargets));
+      yoefefp:size();
       -- currT = torch.toc(start)
       -- print('seqC:forward in ', currT .. 's')
       -- start = torch.tic()

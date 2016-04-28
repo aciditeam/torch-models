@@ -29,3 +29,43 @@ function uniqueTensor(table)
   end
   return res;
 end
+
+function gradientCheck()
+  local decGP_est, encGP_est = torch.DoubleTensor(decGradParams:size()), torch.DoubleTensor(encGradParams:size())
+
+  -- Easy function to do forward pass over coupled network and get error
+  function forwardPass()
+    local encOut = enc:forward(encInSeq)
+    forwardConnect(encLSTM, decLSTM)
+    local decOut = dec:forward(decInSeq)
+    local E = criterion:forward(decOut, decOutSeq)
+    return E
+  end
+
+  -- Check encoder
+  for i = 1, encGradParams:size(1) do
+    -- Forward with \theta+eps
+    encParams[i] = encParams[i] + eps
+    local C1 = forwardPass()
+    -- Forward with \theta-eps
+    encParams[i] = encParams[i] - 2 * eps
+    local C2 = forwardPass()
+
+    encParams[i] = encParams[i] + eps
+    encGP_est[i] = (C1 - C2) / (2 * eps)
+  end
+  tester:assertTensorEq(encGradParams, encGP_est, eps, "Numerical gradient check for encoder failed")
+
+  -- Check decoder
+  for i = 1, decGradParams:size(1) do
+    -- Forward with \theta+eps
+    decParams[i] = decParams[i] + eps
+    local C1 = forwardPass()
+    -- Forward with \theta-eps
+    decParams[i] = decParams[i] - 2 * eps
+    local C2 = forwardPass()
+    decParams[i] = decParams[i] + eps
+    decGP_est[i] = (C1 - C2) / (2 * eps)
+  end
+  tester:assertTensorEq(decGradParams, decGP_est, eps, "Numerical gradient check for decoder failed")
+end

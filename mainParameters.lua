@@ -32,18 +32,18 @@ function setDefaultConfiguration()
   ----------------------------------------------------------------------
   -- Learning options
   ----------------------------------------------------------------------
-  options.optimization          = 'LBFGS';      -- optimization method: SGD | ASGD | CG | LBFGS
+  options.optimization          = 'ADAM';       -- optimization method: SGD | ASGD | CG | LBFGS
   options.lambda                = 0.2           -- sparsity coefficient
-  options.beta                  = 1             -- prediction error coefficient
+  options.beta                  = 0.1           -- prediction error coefficient
   options.eta                   = 2e-3          -- learning rate
-  options.etadecay              = 1e-5          -- learning rate decay
-  options.learningRate          = 1e-3;         -- learning rate at t=0
-  options.batchSize             = 5;            -- mini-batch size (1 = pure stochastic)'
+  options.etadecay              = 1e-3          -- learning rate decay
+  options.learningRate          = 1e-5;         -- learning rate at t=0
+  options.batchSize             = 32;           -- mini-batch size (1 = pure stochastic)'
   options.weightDecay           = 0.2;          -- weight decay (SGD only)
   options.momentum              = 0.8;          -- gradient momentum (SGD only)
   options.t0                    = 1;            -- start averaging at t0 (ASGD only), in nb of epochs
   options.maxIter               = 1e9;          -- maximum nb of pre-training iterations
-  options.maxEpochs             = 30;           -- maximum nb of epochs for learning
+  options.maxEpochs             = 1000;         -- maximum nb of epochs for learning
   options.nbIter                = 1000000       -- max number of updates
   options.type                  = 'float'       -- type of the data: float|double|cuda
   -- for linear model only:
@@ -65,19 +65,18 @@ function setDefaultConfiguration()
   ----------------------------------------------------------------------
   -- Optimization and regularization
   ----------------------------------------------------------------------
-  options.validPercent          = 0.1
-  options.nbLayers              = 5
-  options.layers                = {500,1000,2000,1000,500}
-  options.resampleVal           = 512
+  options.validPercent          = 0.1           -- percentage of dataset to use as validation  
+  options.resampleVal           = 128           -- size of time series resampling 
   options.subLinearEpoch        = 3             -- At which epoch we should start mini-batch sub-linear SGD
   options.superLinearEpoch      = 10            -- At which epoch we should start super-linear higher-level algorithm
-  options.regularizeL1          = 0             -- TODO : ADD THIS FOR REAL
-  options.regularizeL2          = 0             -- TODO : ADD THIS FOR REAL
-  options.regularizeL1L2        = 1             -- TODO : ADD THIS FOR REAL
-  options.dropout               = 1
-  options.batchNormalization    = 1             -- TODO : ADD THIS FOR REAL
+  options.regularizeL1          = 0
+  options.regularizeL2          = 0           
   options.maxValidRise          = 3
-  options.adaptiveLearning      = 1             -- TODO : ADD THIS FOR REAL
+  options.validationRate        = 5
+  options.adaptiveLearning      = false             
+  options.zcaWhitening          = false
+  options.gcnNormalize          = false
+  options.dataAugmentation      = true
   
   local distributions = {};
   ----------------------------------------------------------------------

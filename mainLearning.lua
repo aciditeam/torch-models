@@ -237,9 +237,17 @@ function supervisedTrain(model, trainData, options)
    for t = 1,trainData.data:size(1),options.batchSize do
       -- disp progress
       xlua.progress(t, trainData.data:size(1))
+      local inputs = {};
+      -- Check size (for last batch)
+      bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1)
       -- create mini batch
-      local inputs = {}
-      local targets = {}
+      if (trainData.data[1]:nDimension() == 1) then
+        inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
+      else
+        inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+      end
+      local targets = torch.zeros(bSize)
+      local k = 1;
       -- iterate over mini-batch examples
       for i = t,math.min(t+options.batchSize-1,trainData.data:size(1)) do
          -- load new sample
@@ -247,8 +255,9 @@ function supervisedTrain(model, trainData, options)
          local target = trainData.labels[shuffle[i]]
          if options.type == 'double' then input = input:double() end
          if options.cuda then input = input:cuda() end
-         table.insert(inputs, input)
-         table.insert(targets, target)
+         inputs[k] = input;
+         targets[k] = target;
+         k = k + 1
       end
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
@@ -260,26 +269,35 @@ function supervisedTrain(model, trainData, options)
         gradParameters:zero()
         -- f is the average of all criterions
         local f = 0
-        -- evaluate function for each example in the mini batch
-        for i = 1,#inputs do
-          -- estimate forward pass
-          local output = model:forward(inputs[i])
-          -- estimate classification (compare to target)
-          local err = criterion:forward(output, targets[i])
+        -- [[ Evaluate function for a complete mini-batch at once ]]--
+        -- estimate forward pass
+        local output = model:forward(inputs)
+        -- estimate classification (compare to target)
+        local err = criterion:forward(output, targets)
           -- TODO
           -- Add the sparsity here !
           -- TODO
-          -- compute overall error
-          f = f + err
-          -- estimate df/dW (perform back-prop)
-          local df_do = criterion:backward(output, targets[i])
-          model:backward(inputs[i], df_do)
-          -- update confusion
-          confusion:add(output, targets[i])
+        -- compute overall error
+        f = f + err
+        -- estimate df/dW (perform back-prop)
+        local df_do = criterion:backward(output, targets)
+        model:backward(inputs, df_do)
+        -- in case of combined criterion
+        if (torch.type(output) == 'table') then output = output[1]; end
+        -- update confusion
+        for i = 1,inputs:size(1) do
+          confusion:add(output[i], targets[i]) 
         end
-        -- normalize gradients and f(X)
-        gradParameters:div(#inputs)
-        f = f/#inputs
+        -- penalties (L1 and L2):
+        if options.regularizeL1 ~= 0 or options.regularizeL2 ~= 0 then
+            -- locals:
+            local norm,sign = torch.norm,torch.sign
+            -- Loss:
+            f = f + options.regularizeL1 * norm(parameters,1)
+            f = f + options.regularizeL2 * norm(parameters,2) ^ 2 / 2
+            -- Gradients:
+            gradParameters:add(sign(parameters):mul(options.regularizeL1) + parameters:clone():mul(options.regularizeL2))
+         end
         -- return f and df/dX
         return f,gradParameters
       end
@@ -289,6 +307,12 @@ function supervisedTrain(model, trainData, options)
       else
          optimMethod(feval, parameters, optimState)
       end
+      -- TODO
+      -- TODO
+      -- Forget the gradient in case of recurrent model
+      -- model:forget();
+      -- TODO 
+      -- TODO
    end
    -- time taken
    time = sys.clock() - time;
@@ -304,9 +328,9 @@ function supervisedTrain(model, trainData, options)
    end
    -- save/log current net
    local filename = paths.concat(options.save, 'model.net')
-   os.execute('mkdir -p ' .. sys.dirname(filename))
-   print('==> saving model to '..filename)
-   torch.save(filename, model)
+   --os.execute('mkdir -p ' .. sys.dirname(filename))
+   --print('==> saving model to '..filename)
+   --torch.save(filename, model)
    -- next epoch
    epoch = epoch + 1
    return (1 - confusion.totalValid);
@@ -335,21 +359,44 @@ function supervisedTest(model, testData, options)
       cachedparams = parameters:clone()
       parameters:copy(average)
    end
+   -- TODO
+   -- TODO
+   -- Check if RNN should avoid this step ! (Seems that it will not record the time-steps in evaluation mode !)
+   -- TODO
+   -- TODO
    -- set model to evaluate mode (for modules that differ in training and testing, like Dropout)
    model:evaluate();
    -- test over test data
    print('==> testing on test set:')
-   for t = 1,testData.data:size(1) do
+   for t = 1,testData.data:size(1),options.batchSize do
       -- disp progress
       xlua.progress(t, testData.data:size(1))
-      -- get new sample
-      local input = testData.data[t]
-      if options.type == 'double' then input = input:double() end
-      if options.cuda then input = input:cuda() end
-      local target = testData.labels[t]
+      -- create mini batch
+      local inputs = {};
+      -- Check size of batch (for last smaller)
+      bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
+      if (testData.data[1]:nDimension() == 1) then
+        inputs = torch.Tensor(bSize, testData.data[1]:size(1))
+      else
+        inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
+      end
+      local targets = torch.Tensor(bSize)
+      -- iterate over mini-batch examples
+      local k = 1;
+      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+        inputs[k] = testData.data[i];
+        targets[k] = testData.labels[i];
+        k = k + 1;
+         --table.insert(inputs, input)
+         --table.insert(targets, target)
+      end
       -- test sample
-      local pred = model:forward(input)
-      confusion:add(pred, target)
+      local pred = model:forward(inputs)
+      -- in case of combined criterion
+      if (torch.type(pred) == 'table') then pred = pred[1]; end
+      for i = 1,k-1 do
+        confusion:add(pred[i], targets[i])
+      end
    end
    -- timing
    time = sys.clock() - time
@@ -374,6 +421,82 @@ function supervisedTest(model, testData, options)
 end
 
 ----------------------------------------------------------------------
+-- Unsupervised learning function with tables
+-- Mainly used for recurrent networks
+----------------------------------------------------------------------
+function unsupervisedTable(model, testData, params)
+  -- are we using the hessian?
+  if params.hessian then
+    model:initDiagHessianParameters()
+  end
+  -- set model to training mode (for modules that differ in training and testing, like Dropout)
+  model:training();
+  -- get all parameters
+  x,dl_dx,ddl_ddx = model:getParameters();
+  -- training errors
+  local err = 0
+  local iter = 0
+  for t = 1,math.min(params.maxIter, (testData.data[1]:size(1)-params.batchSize)),params.batchSize do
+    -- progress
+    iter = iter+1
+    xlua.progress(iter*params.batchSize, testData.data[1]:size(1));
+    -- create mini batch
+    local inputs = {};
+    local targets = {};
+    -- Check size of batch (for last smaller)
+    bSize = math.min(options.batchSize, testData.data[1]:size(1) - t + 1);
+    if (testData.data[1]:nDimension() == 2) then
+      for i = 1,#testData.data do
+        inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+        targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+      end
+    else
+      for i = 1,#testData.data do
+        inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+        targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+      end
+    end
+    -- iterate over mini-batch examples
+    for k = 1,#testData.data do
+      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+        inputs[k] = testData.data[k][i];
+        targets[k] = testData.data[k][i];
+        --
+        -- TODO
+        -- This is where to add noise, warp, outlier, etc ...
+        -- Or should I do this inside the construction of the unsupervised dataset ?
+        -- TODO
+        --
+        k = k + 1;
+      end
+    end
+    -- define eval closure
+    local feval = function()
+      -- reset gradient/f
+      local f = 0
+      dl_dx:zero()
+      -- estimate f and gradients, for minibatch
+      f = f + model:updateOutput(inputs, targets)
+      -- compute gradients
+      model:updateGradInput(inputs, targets)
+      model:accGradParameters(inputs, targets)
+      -- normalize
+      -- dl_dx:div(#inputs); f = f/#inputs;
+      -- return f and df/dx
+      return f,dl_dx
+    end
+    -- optimize on current mini-batch
+    _,fs = optimMethod(feval, x, optimState)
+    err = err + fs[1] * params.batchSize -- so that err is indep of batch size
+    -- TODO
+    -- Reset the model gradients in case of recurrent model
+    -- model:forget()
+    -- TODO
+  end
+  return err;
+end
+
+----------------------------------------------------------------------
 -- Main unsupervised learning function
 -- Rely on a optimization structure with options
 --  . save          ('results')   - subdirectory to save/log experiments in
@@ -389,10 +512,16 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function unsupervisedTrain(model, testData, params)
+  -- check if we are working with a table
+  if torch.type(testData.data) == 'table' then
+    return unsupervisedTable(model, testData, params);
+  end
   -- are we using the hessian?
   if params.hessian then
     model:initDiagHessianParameters()
   end
+  -- set model to training mode (for modules that differ in training and testing, like Dropout)
+  model:training();
   -- get all parameters
   x,dl_dx,ddl_ddx = model:getParameters();
   -- training errors
@@ -412,12 +541,6 @@ function unsupervisedTrain(model, testData, params)
         local ex = testData.data[i];
         if options.cuda then ex:cuda(); end
         local input = ex;
-        --
-        -- TODO
-        -- This is where to add noise, warp, outlier, etc ...
-        -- Or should I do this inside the construction of the unsupervised dataset ?
-        -- TODO
-        --
         local target = ex;
         model:updateOutput(input, target)
         -- gradient
@@ -441,36 +564,62 @@ function unsupervisedTrain(model, testData, params)
     end
     -- progress
     iter = iter+1
-    xlua.progress(iter*params.batchSize, params.statinterval)
-    -- create mini-batch
-    local example = testData.data[t]
-    local inputs = {}
-    local targets = {}
-    for i = t,math.min(t+params.batchSize-1,testData.data:size(1)) do
-      -- load new sample
-      local sample = testData.data[i]
-      if options.cuda then sample:cuda(); end
-      local input = sample:clone()
-      local target = sample:clone()
-      table.insert(inputs, input)
-      table.insert(targets, target)
+    xlua.progress(iter*params.batchSize, testData.data:size(1));
+    -- create mini batch
+    local inputs = {};
+    local targets = {};
+    -- Check size of batch (for last smaller)
+    bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
+    if (testData.data[1]:nDimension() == 1) then
+      inputs = torch.Tensor(bSize, testData.data[1]:size(1))
+      targets = torch.Tensor(bSize, testData.data[1]:size(1))
+    else
+      inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
+      targets = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
     end
+    -- iterate over mini-batch examples
+    local k = 1;
+    for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+      inputs[k] = testData.data[i]:clone();
+      targets[k] = testData.data[i]:clone();
+        
+        --
+        -- TODO
+        -- This is where to add noise, warp, outlier, etc ...
+        -- Or should I do this inside the construction of the unsupervised dataset ?
+        -- TODO
+        --
+        
+        k = k + 1;
+         --table.insert(inputs, input)
+         --table.insert(targets, target)
+      end
     -- define eval closure
     local feval = function()
       -- reset gradient/f
       local f = 0
+      --model:forget()
       dl_dx:zero()
-      -- estimate f and gradients, for minibatch
-      for i = 1,#inputs do
-        -- f
-        f = f + model:updateOutput(inputs[i], targets[i])
-        -- gradients
-        model:updateGradInput(inputs[i], targets[i])
-        model:accGradParameters(inputs[i], targets[i])
-      end
+      --
+      -- TODO FOR ALL TRAINING METHODS !
+      -- GRADIENT CLIPPING IN CASE OF RECURRENT MODEL !
+      -- if opt.cutoffNorm > 0 then
+      --   local norm = model:gradParamClip(opt.cutoffNorm) -- affects gradParams
+      --         opt.meanNorm = opt.meanNorm and (opt.meanNorm*0.9 + norm*0.1) or norm
+      --   
+      -- model:maxParamNorm(opt.maxOutNorm) -- affects params 
+      --
+      --
+      --
+      -- f
+      f = f + model:updateOutput(inputs, targets)
+      --f = f+model:forward(inputs,targets);
+      -- gradients
+      model:updateGradInput(inputs, targets)
+      model:accGradParameters(inputs, targets)
       -- normalize
-      dl_dx:div(#inputs)
-      f = f/#inputs
+      --dl_dx:div(#inputs)
+      --f = f/#inputs
       -- return f and df/dx
       return f,dl_dx
     end
@@ -481,7 +630,79 @@ function unsupervisedTrain(model, testData, params)
     if params.model:find('psd') then
       model:normalize()
     end
+    -- TODO
+    -- Reset the model gradients in case of recurrent model
+    -- model:forget();
+    -- TODO
   end
+  return err;
+end
+
+----------------------------------------------------------------------
+-- Unsupervised testing for table
+----------------------------------------------------------------------
+function unsupervisedTestTable(model, testData, params)
+  -- training errors
+  local err = 0
+  local iter = 0
+  local time = sys.clock();
+  -- Switch model to evaluate mode
+  model:evaluate();
+  -- Update the error of the model
+  err = err + model:updateOutput(testData.data, testData.data)
+  -- timing
+  time = sys.clock() - time
+  time = time / testData.data[1]:size(1)
+  print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+  err = err / testData.data[1]:size(1);
+  return err;
+end
+
+----------------------------------------------------------------------
+-- Main unsupervised learning function
+-- Rely on a optimization structure with options
+--  . save          ('results')   - subdirectory to save/log experiments in
+--  . visualize     (false)       - visualize input data and weights during training
+--  . plot          (false)       - live plot
+--  . optimization  ('SGD')       - optimization method: SGD | ASGD | CG | LBFGS
+--  . learningRate  (1e-3)        - learning rate at t=0
+--  . batchSize     (1)           - mini-batch size (1 = pure stochastic)'
+--  . weightDecay   (0)           - weight decay (SGD only)
+--  . momentum      (0)           - momentum (SGD only)
+--  . t0            (1)           - start averaging at t0 (ASGD only), in nb of epochs
+--  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
+--  . type          ('float')     - type of the data: float|double|cuda
+--
+function unsupervisedTest(model, testData, params)
+  -- check if we are working with a table
+  if torch.type(testData.data) == 'table' then
+    return unsupervisedTestTable(model, testData, params);
+  end
+  -- training errors
+  local err = 0
+  local iter = 0
+  local time = sys.clock();
+  -- Switch model to evaluate mode
+  model:evaluate();
+  err = err + model:updateOutput(testData.data:clone(), testData.data:clone())
+  --for i = 1,testData.data:size(1) do
+    -- progress
+  --  iter = iter+1
+  --  xlua.progress(iter*params.batchSize, params.statinterval)
+    -- create mini-batch
+  --  local example = testData.data[t]
+    -- load new sample
+  --  local sample = testData.data[i]
+  --  if options.cuda then sample:cuda(); end
+  --  local input = sample:clone()
+  --  local target = sample:clone()
+  --  err = err + model:forward(input, target)
+  --end
+  -- timing
+  time = sys.clock() - time
+  time = time / testData.data:size(1)
+  print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+  err = err / testData.data:size(1);
   return err;
 end
 
