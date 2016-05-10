@@ -70,7 +70,7 @@ options.visualize = true;
 -- Switching to float (economic)
 torch.setdefaulttensortype('torch.FloatTensor')
 -- Eventual CUDA support
-options.cuda = false;
+options.cuda = true;
 if options.cuda then
   print('==> switching to CUDA')
   local ok, cunn = pcall(require, 'fbcunn')
@@ -88,9 +88,8 @@ torch.setnumthreads(4);
 ----------------------------------------------------------------------
 
 -- Change this directory to point on all UCR datasets
-baseDir = '/Users/esling/Dropbox/TS_Datasets';
+baseDir = '/home/aciditeam/datasets/TS_Datasets';
 
---[[
 setList = {'50words','Adiac','ArrowHead','ARSim','Beef',
   'BeetleFly','BirdChicken','Car','CBF','Chlorine','CinECG',
   'Coffee','Computers','Cricket_X','Cricket_Y','Cricket_Z','DiatomSize',
@@ -110,9 +109,8 @@ setList = {'50words','Adiac','ArrowHead','ARSim','Beef',
   'ToeSegmentation1','ToeSegmentation2','Trace','Two_Patterns','TwoLeadECG',
   'uWGestureX','uWGestureY','uWGestureZ','Vehicle','Vowel','Wafer','Waveform','Wdbc','Wine',
   'Wins','WordsSynonyms','Worms','WormsTwoClass','Yeast','Yoga'};
-]]--
 
-setList = {'ArrowHead','Beef','BeetleFly','BirdChicken'};
+--setList = {'ArrowHead','Beef','BeetleFly','BirdChicken'};
 --setList = {'50words','Adiac','ArrowHead','ARSim','Beef','BeetleFly','BirdChicken'};
 
 ----------------------------------------------------------------------
@@ -134,7 +132,7 @@ for key,value in ipairs(setList) do
 end
 if options.dataAugmentation then
   print " - Performing data augmentation";
-  sets = data_augmentation(sets);
+  --sets = data_augmentation(sets);
 end
 
 ----------------------------------------------------------------------
@@ -191,7 +189,7 @@ end
 -- TODO
 
 -- modelsList = {modelMLP, modelCNN, modelInception, modelVGG};
-modelsList = {modelGANClass};
+modelsList = {modelMLP};
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(modelsList) do
@@ -233,6 +231,11 @@ for k, v in ipairs(modelsList) do
     -- Unsupervised set
     local unsupData = unSets["TRAIN"];
     local unsupValid = unSets["VALID"];
+    -- Switch training data to GPU
+    if options.cuda then
+      unsupData.data = unsupData.data:cuda();
+      unsupValid.data = unsupValid.data:cuda();
+    end
     -- Set of trained layers
     trainedLayers = {};
     for l = 1,structure.nLayers do
@@ -247,7 +250,7 @@ for k, v in ipairs(modelsList) do
       end
       epoch = 0;
       prevValid = 5e20;
-      while epoch < 2 do --options.maxEpochs do
+      while epoch < options.maxEpochs do
         print("Epoch #" .. epoch);
         --[[ Adaptive learning ]]--
         if options.adaptiveLearning then

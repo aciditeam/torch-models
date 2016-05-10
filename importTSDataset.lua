@@ -238,7 +238,7 @@ function data_augmentation(sets)
     totalSize = totalSize + trainData.data:size(1);
     seriesSize = trainData.data:size(2); 
   end
-  maxSize = maxSize * 10;
+  --maxSize = maxSize * 10;
   -- Iterate over the datasets
   for v, k in pairs(sets) do
     local trainData = sets[v]["TRAIN"];

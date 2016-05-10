@@ -248,6 +248,11 @@ function supervisedTrain(model, trainData, options)
       end
       local targets = torch.zeros(bSize)
       local k = 1;
+      -- Switch data to cuda
+      if options.cuda then
+        inputs = inputs:cuda();
+        targets = targets:cuda();
+      end
       -- iterate over mini-batch examples
       for i = t,math.min(t+options.batchSize-1,trainData.data:size(1)) do
          -- load new sample
@@ -259,6 +264,7 @@ function supervisedTrain(model, trainData, options)
          targets[k] = target;
          k = k + 1
       end
+      if options.cuda then inputs = inputs:cuda(); end
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
         -- get new parameters
@@ -381,6 +387,11 @@ function supervisedTest(model, testData, options)
         inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
       end
       local targets = torch.Tensor(bSize)
+      -- Switch data to GPU
+      if options.cuda then
+        inputs = inputs:cuda();
+        targets = targets:cuda();
+      end
       -- iterate over mini-batch examples
       local k = 1;
       for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
@@ -449,11 +460,13 @@ function unsupervisedTable(model, testData, params)
       for i = 1,#testData.data do
         inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
         targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+        if options.cuda then inputs[i]:cuda(); end
       end
     else
       for i = 1,#testData.data do
         inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
         targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+        if options.cuda then inputs[i]:cuda(); end
       end
     end
     -- iterate over mini-batch examples
@@ -579,9 +592,11 @@ function unsupervisedTrain(model, testData, params)
     end
     -- iterate over mini-batch examples
     local k = 1;
+    if options.cuda then inputs = inputs:cuda(); targets = targets:cuda(); end
     for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-      inputs[k] = testData.data[i]:clone();
-      targets[k] = testData.data[i]:clone();
+      inputs[k] = testData.data[i];
+      targets[k] = testData.data[i];
+      --if options.cuda then inputs[k] = inputs[k]:cuda(); targets[k] = targets[k]:cuda(); end
         
         --
         -- TODO
@@ -684,6 +699,7 @@ function unsupervisedTest(model, testData, params)
   local time = sys.clock();
   -- Switch model to evaluate mode
   model:evaluate();
+  if options.cuda then testData.data = testData.data:cuda(); end
   err = err + model:updateOutput(testData.data:clone(), testData.data:clone())
   --for i = 1,testData.data:size(1) do
     -- progress
