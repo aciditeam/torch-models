@@ -75,7 +75,9 @@ if options.cuda then
    print('==> switching to CUDA')
    local ok, cunn = pcall(require, 'fbcunn')
    if not ok then ok, cunn = pcall(require,'cunn') end
-   if not ok then print("Impossible to load CUDA (either fbcunn or cunn)"); os.exit() end
+   if not ok then
+      print("Impossible to load CUDA (either fbcunn or cunn)"); os.exit()
+   end
    local ok, cunn = pcall(require, 'fbcunn')
    deviceParams = cutorch.getDeviceProperties(1)
    cudaComputeCapability = deviceParams.major + deviceParams.minor / 10
@@ -272,7 +274,8 @@ for k, v in ipairs(modelsList) do
 				      learningRate = 2e-3},
 		     unsupData.data:size(2));
 	       end
-	       -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
+	       -- Remaining epochs = Advanced learning algorithm user-selected
+	       -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
 	       if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
 	    end
 	    --[[ Unsupervised pre-training ]]--
