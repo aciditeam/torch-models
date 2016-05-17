@@ -13,7 +13,7 @@ require 'torch'
 require 'image'
 require 'mainFFIArrays'
 local ucr = require './ucr/importUCR'
-local msds = require './msdb/importMSDS'
+local msds = require './msds/importMSDS'
 local preprocess = require './mainPreprocess'
 
 ----------------------------------------------------------------------
@@ -262,6 +262,8 @@ end
 
 -- Load, organize and optionally preprocess the UCR dataset
 function import_full(sets, setList, options)
+   local setList = setList or {'all'}
+   
    print " - Checking data statistics";
    for _, set in ipairs(setList) do
       for _, genericSubset in ipairs({'TRAIN', 'TEST'}) do

@@ -3,12 +3,12 @@
 local M = {}
 
 -- Full Million Song Dataset location
-M.msdb = {}
+M.msds = {}
 
 -- Million Song Dataset 10K-songs-subset location
-M.msdb.subset = {}
+M.msds.subset = {}
 
-M.msdb.subset.dirData = '/data/Documents/machine_learning/datasets/mir/'..
+M.msds.subset.dirData = '/data/Documents/machine_learning/datasets/mir/'..
    'MillionSongSubset/data/'
 
 

@@ -3,6 +3,6 @@
 local sampler = require '../million_song_db/sample.lua'
 local parameters = require '../local_parameters'
 
-local path_to_data = parameters.msdb_path
+local path_to_data = parameters.msds_path
 
 return sampler.get_chroma_sampler(path_to_data)(10)

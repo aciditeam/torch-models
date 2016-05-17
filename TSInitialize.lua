@@ -8,8 +8,8 @@
 
 
 local main_parameters = require './mainParameters'
-local ts_import = require './importTSDataset'
-local preprocess = require './mainPreprocess'
+local ts_import = require './datasets/importTSDataset'
+local preprocess = require './datasets/mainPreprocess'
 
 
 local M = {}
