@@ -81,7 +81,7 @@ cmd_params = cmd:parse(arg)
 
 local options = ts_init.get_options(cmd_params.useCuda)
 
-ts_init.set_globals(); ts_init.cuda(options)
+ts_init.set_globals(); ts_init.set_cuda(options)
 
 ----------------------------------------------------------------------
 -- Initialize datasets

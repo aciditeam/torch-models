@@ -38,7 +38,7 @@ end
 ----------------------------------------------------------------------
 
 -- Eventual CUDA support
-function M.cuda(options)
+function M.set_cuda(options)
    if options.cuda then
       print('==> switching to CUDA')
       local ok, cunn = pcall(require, 'fbcunn')
