@@ -106,106 +106,106 @@ require 'optim'
 --  . popsize           (nil)         - population size. If this is left empty, 4 + int(3 * log(|x|)) will be used
 --
 function configureOptimizer(options, dataSize)
-  if options.optimization == 'SGD' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      learningRateDecay = options.learningRateDecay or 1e-5,
-      weightDecay = options.weightDecay or 1e-5,
-      weightDecays = options.weightDecays or nil,
-      momentum = options.momentum or 1e-1,
-      dampening = options.dampening or 0,
-      nesterov = options.nesterov or true
-    }
-    optimMethod = optim.sgd
-  elseif options.optimization == 'ASGD' then
-    optimState = {
-      eta0 = options.learningRate or 2e-3,
-      lambda = options.learningRateDecay or 1e-5,
-      alpha = options.alpha or 1,
-      t0 = dataSize * options.t0 or 10
-    }
-    optimMethod = optim.asgd
-  elseif options.optimization == 'LBFGS' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      maxIter = options.maxIter or 25,
-      maxEval = options.maxEval or 50,
-      tolFun = options.tolFun or 1e-4,
-      tolX = options.tolX or 1e-8,
-      lineSearch = options.lineSearch or optim.lswolfe,
-      nCorrection = options.nCorrection or 100
-    }
-    optimMethod = optim.lbfgs
-  elseif options.optimization == 'CG' then
-    optimState = {
-      maxIter = options.maxIter or 25,
-      maxEval = options.maxEval or 50
-    }
-    optimMethod = optim.cg
-  elseif options.optimization == 'ADADELTA' then
-    optimState = {
-      rho = options.rho or 0.9,
-      eps = options.eps or 1e-6
-    }
-    optimMethod = optim.adadelta
-  elseif options.optimization == 'ADAGRAD' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      learningRateDecay = options.learningRateDecay or 1e-5
-    }
-    optimMethod = optim.adagrad
-  elseif options.optimization == 'ADAM' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      beta1 = options.beta1 or 0.9,
-      beta2 = options.beta2 or 0.999,
-      epsilon = options.epsilon or 1e-8
-    }
-    optimMethod = optim.adam
-  elseif options.optimization == 'ADAMAX' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      beta1 = options.beta1 or 0.9,
-      beta2 = options.beta2 or 0.999,
-      epsilon = options.epsilon or 1e-8
-    }
-    optimMethod = optim.adamax
-  elseif options.optimization == 'NAG' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      learningRateDecay = options.learningRateDecay or 1e-5,
-      weightDecay = options.weightDecay or 1e-5,
-      momentum = options.momentum or 1e-1
-    }
-    optimMethod = optim.nag
-  elseif options.optimization == 'RMSPROP' then
-    optimState = {
-      learningRate = options.learningRate or 2e-3,
-      alpha = options.alpha or 0.99,
-      epsilon = options.epsilon or 1e-8
-    }
-    optimMethod = optim.rmsprop
-  elseif options.optimization == 'RPROP' then
-    optimState = {
-      stepsize = options.stepsize or 0.1,
-      etaplus = options.etaplus or 1.2,
-      etaminus = options.etaminus or 0.5,
-      stepsizemax = options.stepsizemax or 50,
-      stepsizemin = options.stepsizemin or 1e-6,
-      niter = options.niter or 10
-    }
-    optimMethod = optim.rprop
-  elseif options.optimization == 'CMAES' then
-    optimState = {
-      sigma = options.sigma or 1e-3,
-      maxEval = options.maxEval or 25,
-      ftarget = options.ftarget or 1e-3,
-      popsize = options.popsize or nil
-    }
-    optimMethod = optim.cmaes
-  else
-    error('unknown optimization method')
-  end
+   if options.optimization == 'SGD' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 learningRateDecay = options.learningRateDecay or 1e-5,
+	 weightDecay = options.weightDecay or 1e-5,
+	 weightDecays = options.weightDecays or nil,
+	 momentum = options.momentum or 1e-1,
+	 dampening = options.dampening or 0,
+	 nesterov = options.nesterov or true
+      }
+      optimMethod = optim.sgd
+   elseif options.optimization == 'ASGD' then
+      optimState = {
+	 eta0 = options.learningRate or 2e-3,
+	 lambda = options.learningRateDecay or 1e-5,
+	 alpha = options.alpha or 1,
+	 t0 = dataSize * options.t0 or 10
+      }
+      optimMethod = optim.asgd
+   elseif options.optimization == 'LBFGS' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 maxIter = options.maxIter or 25,
+	 maxEval = options.maxEval or 50,
+	 tolFun = options.tolFun or 1e-4,
+	 tolX = options.tolX or 1e-8,
+	 lineSearch = options.lineSearch or optim.lswolfe,
+	 nCorrection = options.nCorrection or 100
+      }
+      optimMethod = optim.lbfgs
+   elseif options.optimization == 'CG' then
+      optimState = {
+	 maxIter = options.maxIter or 25,
+	 maxEval = options.maxEval or 50
+      }
+      optimMethod = optim.cg
+   elseif options.optimization == 'ADADELTA' then
+      optimState = {
+	 rho = options.rho or 0.9,
+	 eps = options.eps or 1e-6
+      }
+      optimMethod = optim.adadelta
+   elseif options.optimization == 'ADAGRAD' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 learningRateDecay = options.learningRateDecay or 1e-5
+      }
+      optimMethod = optim.adagrad
+   elseif options.optimization == 'ADAM' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 beta1 = options.beta1 or 0.9,
+	 beta2 = options.beta2 or 0.999,
+	 epsilon = options.epsilon or 1e-8
+      }
+      optimMethod = optim.adam
+   elseif options.optimization == 'ADAMAX' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 beta1 = options.beta1 or 0.9,
+	 beta2 = options.beta2 or 0.999,
+	 epsilon = options.epsilon or 1e-8
+      }
+      optimMethod = optim.adamax
+   elseif options.optimization == 'NAG' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 learningRateDecay = options.learningRateDecay or 1e-5,
+	 weightDecay = options.weightDecay or 1e-5,
+	 momentum = options.momentum or 1e-1
+      }
+      optimMethod = optim.nag
+   elseif options.optimization == 'RMSPROP' then
+      optimState = {
+	 learningRate = options.learningRate or 2e-3,
+	 alpha = options.alpha or 0.99,
+	 epsilon = options.epsilon or 1e-8
+      }
+      optimMethod = optim.rmsprop
+   elseif options.optimization == 'RPROP' then
+      optimState = {
+	 stepsize = options.stepsize or 0.1,
+	 etaplus = options.etaplus or 1.2,
+	 etaminus = options.etaminus or 0.5,
+	 stepsizemax = options.stepsizemax or 50,
+	 stepsizemin = options.stepsizemin or 1e-6,
+	 niter = options.niter or 10
+      }
+      optimMethod = optim.rprop
+   elseif options.optimization == 'CMAES' then
+      optimState = {
+	 sigma = options.sigma or 1e-3,
+	 maxEval = options.maxEval or 25,
+	 ftarget = options.ftarget or 1e-3,
+	 popsize = options.popsize or nil
+      }
+      optimMethod = optim.cmaes
+   else
+      error('unknown optimization method')
+   end
 end
 
 ----------------------------------------------------------------------
@@ -242,16 +242,16 @@ function supervisedTrain(model, trainData, options)
       bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1)
       -- create mini batch
       if (trainData.data[1]:nDimension() == 1) then
-        inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
+	 inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
       else
-        inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+	 inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
       end
       local targets = torch.zeros(bSize)
       local k = 1;
       -- Switch data to cuda
       if options.cuda then
-        inputs = inputs:cuda();
-        targets = targets:cuda();
+	 inputs = inputs:cuda();
+	 targets = targets:cuda();
       end
       -- iterate over mini-batch examples
       for i = t,math.min(t+options.batchSize-1,trainData.data:size(1)) do
@@ -267,35 +267,35 @@ function supervisedTrain(model, trainData, options)
       if options.cuda then inputs = inputs:cuda(); end
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
-        -- get new parameters
-        if x ~= parameters then
-          parameters:copy(x)
-        end
+	 -- get new parameters
+	 if x ~= parameters then
+	    parameters:copy(x)
+	 end
          -- reset gradients
-        gradParameters:zero()
-        -- f is the average of all criterions
-        local f = 0
-        -- [[ Evaluate function for a complete mini-batch at once ]]--
-        -- estimate forward pass
-        local output = model:forward(inputs)
-        -- estimate classification (compare to target)
-        local err = criterion:forward(output, targets)
-          -- TODO
-          -- Add the sparsity here !
-          -- TODO
-        -- compute overall error
-        f = f + err
-        -- estimate df/dW (perform back-prop)
-        local df_do = criterion:backward(output, targets)
-        model:backward(inputs, df_do)
-        -- in case of combined criterion
-        if (torch.type(output) == 'table') then output = output[1]; end
-        -- update confusion
-        for i = 1,inputs:size(1) do
-          confusion:add(output[i], targets[i]) 
-        end
-        -- penalties (L1 and L2):
-        if options.regularizeL1 ~= 0 or options.regularizeL2 ~= 0 then
+	 gradParameters:zero()
+	 -- f is the average of all criterions
+	 local f = 0
+	 -- [[ Evaluate function for a complete mini-batch at once ]]--
+	 -- estimate forward pass
+	 local output = model:forward(inputs)
+	 -- estimate classification (compare to target)
+	 local err = criterion:forward(output, targets)
+	 -- TODO
+	 -- Add the sparsity here !
+	 -- TODO
+	 -- compute overall error
+	 f = f + err
+	 -- estimate df/dW (perform back-prop)
+	 local df_do = criterion:backward(output, targets)
+	 model:backward(inputs, df_do)
+	 -- in case of combined criterion
+	 if (torch.type(output) == 'table') then output = output[1]; end
+	 -- update confusion
+	 for i = 1,inputs:size(1) do
+	    confusion:add(output[i], targets[i]) 
+	 end
+	 -- penalties (L1 and L2):
+	 if options.regularizeL1 ~= 0 or options.regularizeL2 ~= 0 then
             -- locals:
             local norm,sign = torch.norm,torch.sign
             -- Loss:
@@ -304,8 +304,8 @@ function supervisedTrain(model, trainData, options)
             -- Gradients:
             gradParameters:add(sign(parameters):mul(options.regularizeL1) + parameters:clone():mul(options.regularizeL2))
          end
-        -- return f and df/dX
-        return f,gradParameters
+	 -- return f and df/dX
+	 return f,gradParameters
       end
       -- optimize on current mini-batch
       if optimMethod == optim.asgd then
@@ -358,7 +358,7 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function supervisedTest(model, testData, options)
-      -- local vars
+   -- local vars
    local time = sys.clock()
    -- averaged param use?
    if average then
@@ -382,22 +382,22 @@ function supervisedTest(model, testData, options)
       -- Check size of batch (for last smaller)
       bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
       if (testData.data[1]:nDimension() == 1) then
-        inputs = torch.Tensor(bSize, testData.data[1]:size(1))
+	 inputs = torch.Tensor(bSize, testData.data[1]:size(1))
       else
-        inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
+	 inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
       end
       local targets = torch.Tensor(bSize)
       -- Switch data to GPU
       if options.cuda then
-        inputs = inputs:cuda();
-        targets = targets:cuda();
+	 inputs = inputs:cuda();
+	 targets = targets:cuda();
       end
       -- iterate over mini-batch examples
       local k = 1;
       for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-        inputs[k] = testData.data[i];
-        targets[k] = testData.labels[i];
-        k = k + 1;
+	 inputs[k] = testData.data[i];
+	 targets[k] = testData.labels[i];
+	 k = k + 1;
          --table.insert(inputs, input)
          --table.insert(targets, target)
       end
@@ -406,7 +406,7 @@ function supervisedTest(model, testData, options)
       -- in case of combined criterion
       if (torch.type(pred) == 'table') then pred = pred[1]; end
       for i = 1,k-1 do
-        confusion:add(pred[i], targets[i])
+	 confusion:add(pred[i], targets[i])
       end
    end
    -- timing
@@ -436,77 +436,77 @@ end
 -- Mainly used for recurrent networks
 ----------------------------------------------------------------------
 function unsupervisedTable(model, testData, params)
-  -- are we using the hessian?
-  if params.hessian then
-    model:initDiagHessianParameters()
-  end
-  -- set model to training mode (for modules that differ in training and testing, like Dropout)
-  model:training();
-  -- get all parameters
-  x,dl_dx,ddl_ddx = model:getParameters();
-  -- training errors
-  local err = 0
-  local iter = 0
-  for t = 1,math.min(params.maxIter, (testData.data[1]:size(1)-params.batchSize)),params.batchSize do
-    -- progress
-    iter = iter+1
-    xlua.progress(iter*params.batchSize, testData.data[1]:size(1));
-    -- create mini batch
-    local inputs = {};
-    local targets = {};
-    -- Check size of batch (for last smaller)
-    bSize = math.min(options.batchSize, testData.data[1]:size(1) - t + 1);
-    if (testData.data[1]:nDimension() == 2) then
-      for i = 1,#testData.data do
-        inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
-        targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
-        if options.cuda then inputs[i]:cuda(); end
+   -- are we using the hessian?
+   if params.hessian then
+      model:initDiagHessianParameters()
+   end
+   -- set model to training mode (for modules that differ in training and testing, like Dropout)
+   model:training();
+   -- get all parameters
+   x,dl_dx,ddl_ddx = model:getParameters();
+   -- training errors
+   local err = 0
+   local iter = 0
+   for t = 1,math.min(params.maxIter, (testData.data[1]:size(1)-params.batchSize)),params.batchSize do
+      -- progress
+      iter = iter+1
+      xlua.progress(iter*params.batchSize, testData.data[1]:size(1));
+      -- create mini batch
+      local inputs = {};
+      local targets = {};
+      -- Check size of batch (for last smaller)
+      bSize = math.min(options.batchSize, testData.data[1]:size(1) - t + 1);
+      if (testData.data[1]:nDimension() == 2) then
+	 for i = 1,#testData.data do
+	    inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+	    targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+	    if options.cuda then inputs[i]:cuda(); end
+	 end
+      else
+	 for i = 1,#testData.data do
+	    inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+	    targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+	    if options.cuda then inputs[i]:cuda(); end
+	 end
       end
-    else
-      for i = 1,#testData.data do
-        inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
-        targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
-        if options.cuda then inputs[i]:cuda(); end
+      -- iterate over mini-batch examples
+      for k = 1,#testData.data do
+	 for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+	    inputs[k] = testData.data[k][i];
+	    targets[k] = testData.data[k][i];
+	    --
+	    -- TODO
+	    -- This is where to add noise, warp, outlier, etc ...
+	    -- Or should I do this inside the construction of the unsupervised dataset ?
+	    -- TODO
+	    --
+	    k = k + 1;
+	 end
       end
-    end
-    -- iterate over mini-batch examples
-    for k = 1,#testData.data do
-      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-        inputs[k] = testData.data[k][i];
-        targets[k] = testData.data[k][i];
-        --
-        -- TODO
-        -- This is where to add noise, warp, outlier, etc ...
-        -- Or should I do this inside the construction of the unsupervised dataset ?
-        -- TODO
-        --
-        k = k + 1;
+      -- define eval closure
+      local feval = function()
+	 -- reset gradient/f
+	 local f = 0
+	 dl_dx:zero()
+	 -- estimate f and gradients, for minibatch
+	 f = f + model:updateOutput(inputs, targets)
+	 -- compute gradients
+	 model:updateGradInput(inputs, targets)
+	 model:accGradParameters(inputs, targets)
+	 -- normalize
+	 -- dl_dx:div(#inputs); f = f/#inputs;
+	 -- return f and df/dx
+	 return f,dl_dx
       end
-    end
-    -- define eval closure
-    local feval = function()
-      -- reset gradient/f
-      local f = 0
-      dl_dx:zero()
-      -- estimate f and gradients, for minibatch
-      f = f + model:updateOutput(inputs, targets)
-      -- compute gradients
-      model:updateGradInput(inputs, targets)
-      model:accGradParameters(inputs, targets)
-      -- normalize
-      -- dl_dx:div(#inputs); f = f/#inputs;
-      -- return f and df/dx
-      return f,dl_dx
-    end
-    -- optimize on current mini-batch
-    _,fs = optimMethod(feval, x, optimState)
-    err = err + fs[1] * params.batchSize -- so that err is indep of batch size
-    -- TODO
-    -- Reset the model gradients in case of recurrent model
-    -- model:forget()
-    -- TODO
-  end
-  return err;
+      -- optimize on current mini-batch
+      _,fs = optimMethod(feval, x, optimState)
+      err = err + fs[1] * params.batchSize -- so that err is indep of batch size
+      -- TODO
+      -- Reset the model gradients in case of recurrent model
+      -- model:forget()
+      -- TODO
+   end
+   return err;
 end
 
 ----------------------------------------------------------------------
@@ -525,152 +525,152 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function unsupervisedTrain(model, testData, params)
-  -- check if we are working with a table
-  if torch.type(testData.data) == 'table' then
-    return unsupervisedTable(model, testData, params);
-  end
-  -- are we using the hessian?
-  if params.hessian then
-    model:initDiagHessianParameters()
-  end
-  -- set model to training mode (for modules that differ in training and testing, like Dropout)
-  model:training();
-  -- get all parameters
-  x,dl_dx,ddl_ddx = model:getParameters();
-  -- training errors
-  local err = 0
-  local iter = 0
-  for t = 1,math.min(params.maxIter, (testData.data:size(1)-params.batchSize)),params.batchSize do
-    -- update diagonal hessian parameters
-    if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
-      -- some extra vars:
-      local hessiansamples = params.hessiansamples
-      local minhessian = params.minhessian
-      local maxhessian = params.maxhessian
-      local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
-      etas = etas or ddl_ddx:clone()
-      for i = 1,hessiansamples do
-        -- next
-        local ex = testData.data[i];
-        if options.cuda then ex:cuda(); end
-        local input = ex;
-        local target = ex;
-        model:updateOutput(input, target)
-        -- gradient
-        dl_dx:zero()
-        model:updateGradInput(input, target)
-        model:accGradParameters(input, target)
-        -- hessian
-        ddl_ddx:zero()
-        model:updateDiagHessianInput(input, target)
-        model:accDiagHessianParameters(input, target)
-        -- accumulate
-        ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
+   -- check if we are working with a table
+   if torch.type(testData.data) == 'table' then
+      return unsupervisedTable(model, testData, params);
+   end
+   -- are we using the hessian?
+   if params.hessian then
+      model:initDiagHessianParameters()
+   end
+   -- set model to training mode (for modules that differ in training and testing, like Dropout)
+   model:training();
+   -- get all parameters
+   x,dl_dx,ddl_ddx = model:getParameters();
+   -- training errors
+   local err = 0
+   local iter = 0
+   for t = 1, math.min(params.maxIter, (testData.data:size(1)-params.batchSize)), params.batchSize do
+      -- update diagonal hessian parameters
+      if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
+	 -- some extra vars:
+	 local hessiansamples = params.hessiansamples
+	 local minhessian = params.minhessian
+	 local maxhessian = params.maxhessian
+	 local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
+	 etas = etas or ddl_ddx:clone()
+	 for i = 1,hessiansamples do
+	    -- next
+	    local ex = testData.data[i];
+	    if options.cuda then ex:cuda(); end
+	    local input = ex;
+	    local target = ex;
+	    model:updateOutput(input, target)
+	    -- gradient
+	    dl_dx:zero()
+	    model:updateGradInput(input, target)
+	    model:accGradParameters(input, target)
+	    -- hessian
+	    ddl_ddx:zero()
+	    model:updateDiagHessianInput(input, target)
+	    model:accDiagHessianParameters(input, target)
+	    -- accumulate
+	    ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
+	 end
+	 -- cap hessian params
+	 print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+	 ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
+	 ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
+	 print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+	 -- generate learning rates
+	 etas:fill(1):cdiv(ddl_ddx_avg)
       end
-      -- cap hessian params
-      print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-      ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
-      ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
-      print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-      -- generate learning rates
-      etas:fill(1):cdiv(ddl_ddx_avg)
-    end
-    -- progress
-    iter = iter+1
-    xlua.progress(iter*params.batchSize, testData.data:size(1));
-    -- create mini batch
-    local inputs = {};
-    local targets = {};
-    -- Check size of batch (for last smaller)
-    bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
-    if (testData.data[1]:nDimension() == 1) then
-      inputs = torch.Tensor(bSize, testData.data[1]:size(1))
-      targets = torch.Tensor(bSize, testData.data[1]:size(1))
-    else
-      inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
-      targets = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
-    end
-    -- iterate over mini-batch examples
-    local k = 1;
-    if options.cuda then inputs = inputs:cuda(); targets = targets:cuda(); end
-    for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-      inputs[k] = testData.data[i];
-      targets[k] = testData.data[i];
-      --if options.cuda then inputs[k] = inputs[k]:cuda(); targets[k] = targets[k]:cuda(); end
-        
-        --
-        -- TODO
-        -- This is where to add noise, warp, outlier, etc ...
-        -- Or should I do this inside the construction of the unsupervised dataset ?
-        -- TODO
-        --
-        
-        k = k + 1;
+      -- progress
+      iter = iter+1
+      xlua.progress(iter*params.batchSize, testData.data:size(1));
+      -- create mini batch
+      local inputs = {};
+      local targets = {};
+      -- Check size of batch (for last smaller)
+      bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
+      if (testData.data[1]:nDimension() == 1) then
+	 inputs = torch.Tensor(bSize, testData.data[1]:size(1))
+	 targets = torch.Tensor(bSize, testData.data[1]:size(1))
+      else
+	 inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
+	 targets = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
+      end
+      -- iterate over mini-batch examples
+      local k = 1;
+      if options.cuda then inputs = inputs:cuda(); targets = targets:cuda(); end
+      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+	 inputs[k] = testData.data[i];
+	 targets[k] = testData.data[i];
+	 --if options.cuda then inputs[k] = inputs[k]:cuda(); targets[k] = targets[k]:cuda(); end
+	 
+	 --
+	 -- TODO
+	 -- This is where to add noise, warp, outlier, etc ...
+	 -- Or should I do this inside the construction of the unsupervised dataset ?
+	 -- TODO
+	 --
+	 
+	 k = k + 1;
          --table.insert(inputs, input)
          --table.insert(targets, target)
       end
-    -- define eval closure
-    local feval = function()
-      -- reset gradient/f
-      local f = 0
-      --model:forget()
-      dl_dx:zero()
-      --
-      -- TODO FOR ALL TRAINING METHODS !
-      -- GRADIENT CLIPPING IN CASE OF RECURRENT MODEL !
-      -- if opt.cutoffNorm > 0 then
-      --   local norm = model:gradParamClip(opt.cutoffNorm) -- affects gradParams
-      --         opt.meanNorm = opt.meanNorm and (opt.meanNorm*0.9 + norm*0.1) or norm
-      --   
-      -- model:maxParamNorm(opt.maxOutNorm) -- affects params 
-      --
-      --
-      --
-      -- f
-      f = f + model:updateOutput(inputs, targets)
-      --f = f+model:forward(inputs,targets);
-      -- gradients
-      model:updateGradInput(inputs, targets)
-      model:accGradParameters(inputs, targets)
+      -- define eval closure
+      local feval = function()
+	 -- reset gradient/f
+	 local f = 0
+	 --model:forget()
+	 dl_dx:zero()
+	 --
+	 -- TODO FOR ALL TRAINING METHODS !
+	 -- GRADIENT CLIPPING IN CASE OF RECURRENT MODEL !
+	 -- if opt.cutoffNorm > 0 then
+	 --   local norm = model:gradParamClip(opt.cutoffNorm) -- affects gradParams
+	 --         opt.meanNorm = opt.meanNorm and (opt.meanNorm*0.9 + norm*0.1) or norm
+	 --   
+	 -- model:maxParamNorm(opt.maxOutNorm) -- affects params 
+	 --
+	 --
+	 --
+	 -- f
+	 f = f + model:updateOutput(inputs, targets)
+	 --f = f+model:forward(inputs,targets);
+	 -- gradients
+	 model:updateGradInput(inputs, targets)
+	 model:accGradParameters(inputs, targets)
+	 -- normalize
+	 --dl_dx:div(#inputs)
+	 --f = f/#inputs
+	 -- return f and df/dx
+	 return f,dl_dx
+      end
+      -- optimize on current mini-batch
+      _,fs = optimMethod(feval, x, optimState)
+      err = err + fs[1] * params.batchSize -- so that err is indep of batch size
       -- normalize
-      --dl_dx:div(#inputs)
-      --f = f/#inputs
-      -- return f and df/dx
-      return f,dl_dx
-    end
-    -- optimize on current mini-batch
-    _,fs = optimMethod(feval, x, optimState)
-    err = err + fs[1] * params.batchSize -- so that err is indep of batch size
-    -- normalize
-    if params.model:find('psd') then
-      model:normalize()
-    end
-    -- TODO
-    -- Reset the model gradients in case of recurrent model
-    -- model:forget();
-    -- TODO
-  end
-  return err;
+      if params.model:find('psd') then
+	 model:normalize()
+      end
+      -- TODO
+      -- Reset the model gradients in case of recurrent model
+      -- model:forget();
+      -- TODO
+   end
+   return err;
 end
 
 ----------------------------------------------------------------------
 -- Unsupervised testing for table
 ----------------------------------------------------------------------
 function unsupervisedTestTable(model, testData, params)
-  -- training errors
-  local err = 0
-  local iter = 0
-  local time = sys.clock();
-  -- Switch model to evaluate mode
-  model:evaluate();
-  -- Update the error of the model
-  err = err + model:updateOutput(testData.data, testData.data)
-  -- timing
-  time = sys.clock() - time
-  time = time / testData.data[1]:size(1)
-  print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
-  err = err / testData.data[1]:size(1);
-  return err;
+   -- training errors
+   local err = 0
+   local iter = 0
+   local time = sys.clock();
+   -- Switch model to evaluate mode
+   model:evaluate();
+   -- Update the error of the model
+   err = err + model:updateOutput(testData.data, testData.data)
+   -- timing
+   time = sys.clock() - time
+   time = time / testData.data[1]:size(1)
+   print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+   err = err / testData.data[1]:size(1);
+   return err;
 end
 
 ----------------------------------------------------------------------
@@ -689,37 +689,37 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function unsupervisedTest(model, testData, params)
-  -- check if we are working with a table
-  if torch.type(testData.data) == 'table' then
-    return unsupervisedTestTable(model, testData, params);
-  end
-  -- training errors
-  local err = 0
-  local iter = 0
-  local time = sys.clock();
-  -- Switch model to evaluate mode
-  model:evaluate();
-  if options.cuda then testData.data = testData.data:cuda(); end
-  err = err + model:updateOutput(testData.data:clone(), testData.data:clone())
-  --for i = 1,testData.data:size(1) do
-    -- progress
-  --  iter = iter+1
-  --  xlua.progress(iter*params.batchSize, params.statinterval)
-    -- create mini-batch
-  --  local example = testData.data[t]
-    -- load new sample
-  --  local sample = testData.data[i]
-  --  if options.cuda then sample:cuda(); end
-  --  local input = sample:clone()
-  --  local target = sample:clone()
-  --  err = err + model:forward(input, target)
-  --end
-  -- timing
-  time = sys.clock() - time
-  time = time / testData.data:size(1)
-  print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
-  err = err / testData.data:size(1);
-  return err;
+   -- check if we are working with a table
+   if torch.type(testData.data) == 'table' then
+      return unsupervisedTestTable(model, testData, params);
+   end
+   -- training errors
+   local err = 0
+   local iter = 0
+   local time = sys.clock();
+   -- Switch model to evaluate mode
+   model:evaluate();
+   if options.cuda then testData.data = testData.data:cuda(); end
+   err = err + model:updateOutput(testData.data:clone(), testData.data:clone())
+   --for i = 1,testData.data:size(1) do
+   -- progress
+   --  iter = iter+1
+   --  xlua.progress(iter*params.batchSize, params.statinterval)
+   -- create mini-batch
+   --  local example = testData.data[t]
+   -- load new sample
+   --  local sample = testData.data[i]
+   --  if options.cuda then sample:cuda(); end
+   --  local input = sample:clone()
+   --  local target = sample:clone()
+   --  err = err + model:forward(input, target)
+   --end
+   -- timing
+   time = sys.clock() - time
+   time = time / testData.data:size(1)
+   print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+   err = err / testData.data:size(1);
+   return err;
 end
 
 --
@@ -745,92 +745,92 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function supervisedTrainHF(model, testData, params)
-  -- are we using the hessian?
-  if params.hessian then
-    model:initDiagHessianParameters()
-  end
-  -- get all parameters
-  x,dl_dx,ddl_ddx = model:getParameters()
-  -- training errors
-  local err = 0
-  local iter = 0
-  for t = 1,params.maxIter,params.batchSize do
-    -- update diagonal hessian parameters
-    if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
-      -- some extra vars:
-      local hessiansamples = params.hessiansamples
-      local minhessian = params.minhessian
-      local maxhessian = params.maxhessian
-      local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
-      etas = etas or ddl_ddx:clone()
-      for i = 1,hessiansamples do
-        -- next
-        local ex = testData.data[i];
-        if options.cuda then ex:cuda(); end
-        local input = ex;
-        local target = ex;
-        model:updateOutput(input, target)
-        -- gradient
-        dl_dx:zero()
-        model:updateGradInput(input, target)
-        model:accGradParameters(input, target)
-        -- hessian
-        ddl_ddx:zero()
-        model:updateDiagHessianInput(input, target)
-        model:accDiagHessianParameters(input, target)
-        -- accumulate
-        ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
+   -- are we using the hessian?
+   if params.hessian then
+      model:initDiagHessianParameters()
+   end
+   -- get all parameters
+   x,dl_dx,ddl_ddx = model:getParameters()
+   -- training errors
+   local err = 0
+   local iter = 0
+   for t = 1,params.maxIter,params.batchSize do
+      -- update diagonal hessian parameters
+      if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
+	 -- some extra vars:
+	 local hessiansamples = params.hessiansamples
+	 local minhessian = params.minhessian
+	 local maxhessian = params.maxhessian
+	 local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
+	 etas = etas or ddl_ddx:clone()
+	 for i = 1,hessiansamples do
+	    -- next
+	    local ex = testData.data[i];
+	    if options.cuda then ex:cuda(); end
+	    local input = ex;
+	    local target = ex;
+	    model:updateOutput(input, target)
+	    -- gradient
+	    dl_dx:zero()
+	    model:updateGradInput(input, target)
+	    model:accGradParameters(input, target)
+	    -- hessian
+	    ddl_ddx:zero()
+	    model:updateDiagHessianInput(input, target)
+	    model:accDiagHessianParameters(input, target)
+	    -- accumulate
+	    ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
+	 end
+	 -- cap hessian params
+	 print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+	 ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
+	 ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
+	 print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+	 -- generate learning rates
+	 etas:fill(1):cdiv(ddl_ddx_avg)
       end
-      -- cap hessian params
-      print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-      ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
-      ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
-      print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-      -- generate learning rates
-      etas:fill(1):cdiv(ddl_ddx_avg)
-    end
-    -- progress
-    iter = iter+1
-    xlua.progress(iter*params.batchSize, params.statinterval)
-    -- create mini-batch
-    local example = testData.data[t]
-    local inputs = {}
-    local targets = {}
-    for i = t,t+params.batchSize-1 do
-      -- load new sample
-      local sample = testData.data[i]
-      if options.cuda then sample:cuda(); end
-      local input = sample:clone()
-      local target = sample:clone()
-      table.insert(inputs, input)
-      table.insert(targets, target)
-    end
-    -- define eval closure
-    local feval = function()
-      -- reset gradient/f
-      local f = 0
-      dl_dx:zero()
-      -- estimate f and gradients, for minibatch
-      for i = 1,#inputs do
-        -- f
-        f = f + model:updateOutput(inputs[i], targets[i])
-        -- gradients
-        model:updateGradInput(inputs[i], targets[i])
-        model:accGradParameters(inputs[i], targets[i])
+      -- progress
+      iter = iter+1
+      xlua.progress(iter*params.batchSize, params.statinterval)
+      -- create mini-batch
+      local example = testData.data[t]
+      local inputs = {}
+      local targets = {}
+      for i = t,t+params.batchSize-1 do
+	 -- load new sample
+	 local sample = testData.data[i]
+	 if options.cuda then sample:cuda(); end
+	 local input = sample:clone()
+	 local target = sample:clone()
+	 table.insert(inputs, input)
+	 table.insert(targets, target)
       end
+      -- define eval closure
+      local feval = function()
+	 -- reset gradient/f
+	 local f = 0
+	 dl_dx:zero()
+	 -- estimate f and gradients, for minibatch
+	 for i = 1,#inputs do
+	    -- f
+	    f = f + model:updateOutput(inputs[i], targets[i])
+	    -- gradients
+	    model:updateGradInput(inputs[i], targets[i])
+	    model:accGradParameters(inputs[i], targets[i])
+	 end
+	 -- normalize
+	 dl_dx:div(#inputs)
+	 f = f/#inputs
+	 -- return f and df/dx
+	 return f,dl_dx
+      end
+      -- optimize on current mini-batch
+      _,fs = optimMethod(feval, x, params)
+      err = err + fs[1] * params.batchSize -- so that err is indep of batch size
       -- normalize
-      dl_dx:div(#inputs)
-      f = f/#inputs
-      -- return f and df/dx
-      return f,dl_dx
-    end
-    -- optimize on current mini-batch
-    _,fs = optimMethod(feval, x, params)
-    err = err + fs[1] * params.batchSize -- so that err is indep of batch size
-    -- normalize
-    if params.model:find('psd') then
-      model:normalize()
-    end
-  end
-  epoch = epoch + 1;
+      if params.model:find('psd') then
+	 model:normalize()
+      end
+   end
+   epoch = epoch + 1;
 end

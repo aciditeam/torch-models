@@ -12,6 +12,8 @@ require 'nn'
 require 'torch'
 require 'image'
 require 'mainFFIArrays'
+local ucr = require './importUCR'
+local preprocess = require './mainPreprocess'
 
 ----------------------------------------------------------------------
 -- A real resampling function for time series
@@ -55,7 +57,7 @@ end
 ----------------------------------------------------------------------
 -- Basic import function for UCR time series with normalization (and resampling)
 ----------------------------------------------------------------------
-function import_data(dirData, setFiles, resampleVal)
+function import_ucr_data(dirData, setFiles, resampleVal)
   -- Sets data
   local sets = {};
   -- Types of datasets
@@ -67,48 +69,15 @@ function import_data(dirData, setFiles, resampleVal)
       print("    - Loading " .. value .. " [" .. valType .. "]");
       -- Get the test and train sets
       local trainName = dirData .. "/" .. value .. "/" .. value .. "_" .. valType; 
-      -- Load the ASCII tab-separated file
-      local csvFile = io.open(trainName, 'r');
-      -- Prepare a data table 
-      local data = {};
-      -- Class indexes
-      local classes = {};
-      local i = 1;
-      -- Parse lines of file
-      for line in csvFile:lines('*l') do
-        data[i] = {};
-        j = 1;
-        for val in string.gmatch(line, "%S+") do
-          if (j == 1) then
-            classes[i] = tonumber(val);
-          else
-            data[i][j-1] = tonumber(val);
-          end
-          j = j + 1;
-        end
-        i = i + 1;
-      end
-      csvFile:close();
-      local finalData = torch.Tensor(data);
+
+      -- Parse data-file
+      local finalData = ucr.parse(trainName)
+      
       if (resampleVal) then
         finalData = tensorResampling(finalData, resampleVal);
       end
-      -- Transform to structure
-      local curData = {
-          data = finalData:float(),
-          labels = torch.Tensor(classes),
-          mean = torch.Tensor(finalData:size(1)),
-          std = torch.Tensor(finalData:size(1)),
-          instances = function () return (data:size(1)) end,
-          length = function () return (data:size(2)) end
-      };
-      -- Zero-mean unit-variance normalization
-      for i = 1,(curData.data:size(1)) do
-        curData.mean[i] = curData.data[i]:mean();
-        curData.std[i] = curData.data[i]:std();
-        curData.data[i] = (curData.data[i] - curData.mean[i]) / curData.std[i];
-      end
-      print('        = ' .. curData.data:size(1) .. ' instances of length ' .. curData.data:size(2));
+      
+      -- Make structure
       sets[value][valType] = curData;
     end
     if (collectgarbage("count") > 1000000) then
@@ -119,6 +88,26 @@ function import_data(dirData, setFiles, resampleVal)
   -- Just make sure to remove unwanted memory
   collectgarbage();
   return sets;
+end
+
+local function make_structure(inputData, classes)
+   -- Transform raw data to structure
+   local structure = {
+      data = inputData:float(),
+      labels = torch.Tensor(classes),  -- classes may be nil
+      mean = torch.Tensor(inputData:size(1)),
+      std = torch.Tensor(inputData:size(1)),
+      instances = function () return (data:size(1)) end,
+      length = function () return (data:size(2)) end
+   };
+   -- Zero-mean unit-variance normalization
+   for i = 1,(structure.data:size(1)) do
+      structure.mean[i] = structure.data[i]:mean();
+      structure.std[i] = structure.data[i]:std();
+      structure.data[i] = (structure.data[i] - structure.mean[i]) / structure.std[i];
+   end
+   print('        = ' .. structure.data:size(1) .. ' instances of length ' .. structure.data:size(2));
+   return structure
 end
 
 ----------------------------------------------------------------------
@@ -296,3 +285,89 @@ end
   -- for v, k in pairs(sets) do
     -- Take only the train set
     -- local trainData = sets[v]["TRAIN"];
+
+
+----------------------------------------------------------------------
+-- Full datasets construction function
+----------------------------------------------------------------------
+
+-- Load, organize and optionally preprocess the UCR dataset 
+function import_ucr_full(baseDir, setList, options)
+   print " - Importing datasets";
+   local baseDir = baseDir or ucr.baseDir
+   local setList = setList or ucr.setList
+   
+   local sets = import_ucr_data(baseDir, setList,
+				options.resampleVal);
+   print " - Checking data statistics";
+   for _, set in ipairs(setList) do
+      for _, genericSubset in ipairs({'TRAIN', 'TEST'}) do
+	 v = sets[set][genericSubset];
+	 meanData = v.data[{{},{}}]:mean();
+	 stdData = v.data[{{},{}}]:std();
+	 print('    - '..set..' [' .. genericSubset ..'] - '..
+		  'mean: ' .. meanData .. ', standard deviation: ' .. stdData);
+      end
+   end
+   if options.dataAugmentation then
+      print " - Performing data augmentation";
+      --sets = data_augmentation(sets);
+   end
+   ----------------------------------------------------------------------
+   -- Validation and unsupervised datasets
+   ----------------------------------------------------------------------
+
+   print " - Constructing balanced validation subsets"
+   -- We shall construct a balanced train/validation subset
+   sets = construct_validation(sets, options.validPercent);
+   print " - Constructing unsupervised superset"
+   -- Also prepare a very large unsupervised dataset
+   unSets = construct_unsupervised(sets, options.validPercent);
+
+   ----------------------------------------------------------------------
+   -- Additional pre-processing code
+   ----------------------------------------------------------------------
+
+   local genericSubsets = {"TRAIN", "VALID", "TEST"}
+   -- Global Contrast Normalization
+   if options.gcnNormalize then
+      print ' - Perform Global Contrast Normalization (GCN) on input data'
+      unSets["TRAIN"].data = preprocess.gcn(unSets["TRAIN"].data);
+      unSets["VALID"].data = preprocess.gcn(unSets["VALID"].data);
+
+      for _, v in ipairs(setList) do
+	 for _, genericSubset in ipairs(genericSubsets) do
+	    sets[v][genericSubset].data = preprocess.gcn(
+	       sets[v][genericSubset].data);
+	 end
+      end
+   end
+   -- Zero-Component Analysis whitening
+   if options.zcaWhitening then
+      print ' - Perform Zero-Component Analysis (ZCA) whitening'
+      local means, P = zca_whiten_fit(
+	 torch.cat(unSets["TRAIN"].data, unSets["VALID"].data, 1));
+      unSets["TRAIN"].data = preprocess.zca_whiten_apply(unSets["TRAIN"].data,
+							 means, P)
+      unSets["VALID"].data = preprocess.zca_whiten_apply(unSets["VALID"].data,
+							 means, P)
+
+      for _, v in pairs(setList) do
+	 local means, P = preprocess.zca_whiten_fit(
+	    torch.cat(sets[v]["TRAIN"].data, sets[v]["VALID"].data, 1));
+	 
+	 for _, genericSubset in ipairs(genericSubsets) do
+	    sets[v][genericSubset].data = preprocess.zca_whiten_apply(
+	       sets[v][genericSubset].data, means, P)
+	 end
+      end
+   end
+
+   return sets, unSets
+end
+
+function dataset_loader(dataset)
+   if not dataset then
+      
+   
+end
