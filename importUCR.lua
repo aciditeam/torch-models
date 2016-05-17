@@ -2,7 +2,7 @@
 --
 -- Deep time series learning: Analysis of Torch
 --
--- UCR Dataset specific functions
+-- UCR Dataset specific local constants and functions
 --
 ----------------------------------------------------------------------
 
