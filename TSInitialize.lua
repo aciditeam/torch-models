@@ -53,7 +53,7 @@ function M.cuda(options)
 end
 
 -- Global parameters
-function M.globals()
+function M.set_globals()
    -- Switching to float (economic)
    torch.setdefaulttensortype('torch.FloatTensor')
    -- Multi-threading

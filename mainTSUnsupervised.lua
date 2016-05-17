@@ -12,7 +12,7 @@ require 'unsup'
 require 'optim'
 require 'torch'
 require 'nninit'
-require 'importTSDataset'
+require 'datasets/importTSDataset'
 require 'mainLearning'
 require 'mainParameters'
 require 'mainProfiler'
@@ -81,7 +81,7 @@ cmd_params = cmd:parse(arg)
 
 local options = ts_init.get_options(cmd_params.useCuda)
 
-ts_init.globals(); ts_init.cuda(options)
+ts_init.set_globals(); ts_init.cuda(options)
 
 ----------------------------------------------------------------------
 -- Initialize datasets
