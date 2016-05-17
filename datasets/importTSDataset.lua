@@ -12,9 +12,9 @@ require 'nn'
 require 'torch'
 require 'image'
 require 'mainFFIArrays'
-local ucr = require './importUCR'
+local ucr = require './ucr/importUCR'
+local msds = require './msdb/importMSDS'
 local preprocess = require './mainPreprocess'
-local 
 
 ----------------------------------------------------------------------
 -- A real resampling function for time series
@@ -344,8 +344,8 @@ function dataset_loader(dataset, options)
       
       return local_importer(baseDir, setList, import_ucr_data)
    elseif dataset == 'million_song_subset' then
-      local baseDir = msdb.baseDir
-      local setList = msdb.setList
+      local baseDir = msds.baseDir
+      local setList = msds.setList
       
       local sets = import_ucr_data(baseDir, setList,
 				   options.resampleVal);
@@ -388,7 +388,7 @@ function import_ucr_data(dirData, setFiles, resampleVal)
   return sets;
 end
 
-function import_msdb_data(dirData, resampleVal)
+function import_msds_data(dirData, resampleVal)
   -- Sets data
   local sets = {};
   -- Types of datasets
