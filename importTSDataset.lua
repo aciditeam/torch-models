@@ -14,6 +14,7 @@ require 'image'
 require 'mainFFIArrays'
 local ucr = require './importUCR'
 local preprocess = require './mainPreprocess'
+local 
 
 ----------------------------------------------------------------------
 -- A real resampling function for time series
@@ -43,9 +44,11 @@ function tensorResampling(data, destSize, type)
         if type == 'bilinear' then
           interpolator.weight[i][j] = 1 - math.abs(relIdx);
         elseif type == 'hermite' then
-          interpolator.weight[i][j] = (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
+	   interpolator.weight[i][j] =
+	      (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
         elseif type == 'lanczos' then
-          interpolator.weight[i][j] = (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
+	   interpolator.weight[i][j] =
+	      (2 * (math.abs(x) ^ 3)) - (3 * (math.abs(x) ^ 2)) + 1;
         end
       end
     end
@@ -55,41 +58,8 @@ function tensorResampling(data, destSize, type)
 end
 
 ----------------------------------------------------------------------
--- Basic import function for UCR time series with normalization (and resampling)
+-- Helper functions
 ----------------------------------------------------------------------
-function import_ucr_data(dirData, setFiles, resampleVal)
-  -- Sets data
-  local sets = {};
-  -- Types of datasets
-  local setsTypes = {"TEST", "TRAIN"};
-  -- Load the datasets (factored)
-  for id,value in ipairs(setFiles) do
-    sets[value] = {};
-    for idT,valType in ipairs(setsTypes) do
-      print("    - Loading " .. value .. " [" .. valType .. "]");
-      -- Get the test and train sets
-      local trainName = dirData .. "/" .. value .. "/" .. value .. "_" .. valType; 
-
-      -- Parse data-file
-      local finalData = ucr.parse(trainName)
-      
-      if (resampleVal) then
-        finalData = tensorResampling(finalData, resampleVal);
-      end
-      
-      -- Make structure
-      sets[value][valType] = curData;
-    end
-    if (collectgarbage("count") > 1000000) then
-      print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
-      collectgarbage();
-    end
-  end
-  -- Just make sure to remove unwanted memory
-  collectgarbage();
-  return sets;
-end
-
 local function make_structure(inputData, classes)
    -- Transform raw data to structure
    local structure = {
@@ -286,19 +256,12 @@ end
     -- Take only the train set
     -- local trainData = sets[v]["TRAIN"];
 
-
 ----------------------------------------------------------------------
 -- Full datasets construction function
 ----------------------------------------------------------------------
 
--- Load, organize and optionally preprocess the UCR dataset 
-function import_ucr_full(baseDir, setList, options)
-   print " - Importing datasets";
-   local baseDir = baseDir or ucr.baseDir
-   local setList = setList or ucr.setList
-   
-   local sets = import_ucr_data(baseDir, setList,
-				options.resampleVal);
+-- Load, organize and optionally preprocess the UCR dataset
+function import_full(sets, setList, options)
    print " - Checking data statistics";
    for _, set in ipairs(setList) do
       for _, genericSubset in ipairs({'TRAIN', 'TEST'}) do
@@ -366,8 +329,92 @@ function import_ucr_full(baseDir, setList, options)
    return sets, unSets
 end
 
-function dataset_loader(dataset)
-   if not dataset then
+function dataset_loader(dataset, options)
+   if not type(dataset) == 'string' then error("Must input chosen dataset") end
+
+   local local_importer = function(baseDir, setList, set_import_f)
+      print " - Importing datasets";
+      local sets = set_import_f(baseDir, setList, options.resampleVal);
       
-   
+      return import_full(sets, setList, options)
+   end
+   if dataset == 'UCR' then
+      local baseDir = ucr.baseDir
+      local setList = ucr.setList
+      
+      return local_importer(baseDir, setList, import_ucr_data)
+   elseif dataset == 'million_song_subset' then
+      local baseDir = msdb.baseDir
+      local setList = msdb.setList
+      
+      local sets = import_ucr_data(baseDir, setList,
+				   options.resampleVal);
+   end
+end
+
+----------------------------------------------------------------------
+-- Dataset specific import functions
+----------------------------------------------------------------------
+function import_ucr_data(dirData, setFiles, resampleVal)
+  -- Sets data
+  local sets = {};
+  -- Types of datasets
+  local setsTypes = {"TEST", "TRAIN"};
+  -- Load the datasets (factored)
+  for id,value in ipairs(setFiles) do
+    sets[value] = {};
+    for idT,valType in ipairs(setsTypes) do
+      print("    - Loading " .. value .. " [" .. valType .. "]");
+      -- Get the test and train sets
+      local trainName = dirData .. "/" .. value .. "/" .. value .. "_" .. valType; 
+
+      -- Parse data-file
+      local finalData = ucr.parse(trainName)
+      
+      if (resampleVal) then
+        finalData = tensorResampling(finalData, resampleVal);
+      end
+      
+      -- Make structure
+      sets[value][valType] = curData;
+    end
+    if (collectgarbage("count") > 1000000) then
+      print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
+      collectgarbage();
+    end
+  end
+  -- Just make sure to remove unwanted memory
+  collectgarbage();
+  return sets;
+end
+
+function import_msdb_data(dirData, resampleVal)
+  -- Sets data
+  local sets = {};
+  -- Types of datasets
+  local setsTypes = {"TEST", "TRAIN"};
+  -- Load the datasets (factored)
+  sets['all'] = {};
+  for idT,valType in ipairs(setsTypes) do
+     print("    - Loading " .. value .. " [" .. valType .. "]");
+     -- Get the test and train sets
+     local trainName = dirData .. "/" .. value .. "/" .. value .. "_" .. valType; 
+     
+     -- Parse data-file
+     local finalData = ucr.parse(trainName)
+     
+     if (resampleVal) then
+        finalData = tensorResampling(finalData, resampleVal);
+     end
+     
+     -- Make structure
+     sets[value][valType] = curData;
+  end
+  if (collectgarbage("count") > 1000000) then
+     print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
+     collectgarbage();
+  end
+  -- Just make sure to remove unwanted memory
+  collectgarbage();
+  return sets;
 end
