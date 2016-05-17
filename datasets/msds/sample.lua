@@ -1,7 +1,7 @@
 -- Sample an h5 file from the database and load its beat-aligned chromagram
 
-local mgs_getters = require '../million_song_db/beat_aligned_feats'
-local file_sample = require '../sample_file'
+local mgs_getters = require './beatAlignedFeats'
+local file_sample = require '../sampleFile'
 
 local M = {}
 
