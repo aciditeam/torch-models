@@ -132,7 +132,7 @@ for key,value in ipairs(setList) do
 end
 if options.dataAugmentation then
   print " - Performing data augmentation";
-  --sets = data_augmentation(sets);
+  sets = data_augmentation(sets);
 end
 
 ----------------------------------------------------------------------
@@ -285,7 +285,11 @@ for k, v in ipairs(modelsList) do
         end
         epoch = epoch + 1;
         -- Collect the garbage
+        print("End of epoch memory count:");
+        print(collectgarbage("count"));
         collectgarbage();
+        print("End of epoch memory (after collect):");
+        print(collectgarbage("count"));
       end
       -- Keep trained layer in table
       trainedLayers[l] = model;
@@ -296,6 +300,7 @@ for k, v in ipairs(modelsList) do
       -- Prepare a set of activations
       forwardedData = {data = {}};
       forwardedValid = {data = {}};
+      collectgarbage();
       -- Perform forward propagation on data
       forwardedData.data = model:forward(unsupData.data);
       if torch.type(forwardedData.data) ~= 'table' then forwardedData.data = forwardedData.data:clone() else
@@ -317,9 +322,14 @@ for k, v in ipairs(modelsList) do
   ----------------------------------------------------------------------
   -- Supervised classification code
   ----------------------------------------------------------------------
+  -- File to write results of current model$
+  resFile = io.open("results/classification_" .. k .. ".txt", "w")
   -- Evaluate over all datasets
   for key,value in ipairs(setList) do
+    -- Start by collecting garbage
+    collectgarbage();
     print("    * (MLP) Classifying " .. value);
+    resFile:write(value, "\t");
     -- Data input size
     inSize = sets[value]["TRAIN"].data:size(2);
     -- Retrieve set of unique classes
@@ -401,7 +411,9 @@ for k, v in ipairs(modelsList) do
       print('Train error = ' .. trainError);
       print('Valid error = ' .. validError);
       print('Test error = ' .. testError);
-    
+      collectgarbage();
     end
+    resFile:write(testError, "\n");
   end
+  resFile:close();
 end

@@ -95,7 +95,7 @@ function import_data(dirData, setFiles, resampleVal)
       end
       -- Transform to structure
       local curData = {
-          data = finalData:float(),
+          data = finalData,
           labels = torch.Tensor(classes),
           mean = torch.Tensor(finalData:size(1)),
           std = torch.Tensor(finalData:size(1)),
@@ -249,7 +249,12 @@ function data_augmentation(sets)
       local newSeries = torch.zeros(seriesMissing, seriesSize);
       newSeriesID = torch.rand(seriesMissing):mul(curNbSeries):floor():add(1);
       newLabels = trainData.labels.index(trainData.labels, 1, newSeriesID:long());
+      collectgarbage();
       for s = 1,seriesMissing do
+        if (s % 1000) == 0 then
+          collectgarbage();
+          print(s);
+        end
         local tmpSeries = trainData.data[newSeriesID[s]]:clone();
         local keptSeries = tmpSeries;
         curDensification = math.floor(math.random() * 4);
