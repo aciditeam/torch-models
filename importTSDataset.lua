@@ -15,8 +15,8 @@ require 'mainFFIArrays'
 local preprocess = require './mainPreprocess'
 local diriter = require './diriter'
 local sampleFile = require './sampleFile'
-local ucr = require './ucr/importUCR'
-local msds = require './msds/importMSDS'
+local ucr = require './importUCR'
+local msds = require './importMSDS'
 
 local M = {}
 
