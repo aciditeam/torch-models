@@ -382,7 +382,7 @@ function M.import_ucr_data(dirData, setFiles, resampleVal)
       end
       
       -- Make structure
-      sets[value][valType] = curData;
+      sets[value][valType] = make_structure(final_data);
     end
     if (collectgarbage("count") > 1000000) then
       print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
