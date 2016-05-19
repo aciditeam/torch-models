@@ -234,34 +234,46 @@ function supervisedTrain(model, trainData, options)
    shuffle = torch.randperm(trainData.data:size(1));
    -- do one epoch
    print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
+   -- Pre-allocate mini batch space
+   local inputs = {};
+   if (trainData.data[1]:nDimension() == 1) then
+      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1))
+   else
+      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+   end
+   local targets = torch.zeros(options.batchSize);
+   -- Switch data to cuda
+   if options.cuda then
+      inputs = inputs:cuda();
+      targets = targets:cuda();
+   end
    for t = 1,trainData.data:size(1),options.batchSize do
       -- disp progress
-      xlua.progress(t, trainData.data:size(1))
-      local inputs = {};
+      --xlua.progress(t, trainData.data:size(1))
       -- Check size (for last batch)
-      bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1)
-      -- create mini batch
-      if (trainData.data[1]:nDimension() == 1) then
-	 inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
-      else
-	 inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+      bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1);
+      if (bSize ~= options.batchSize) then
+        -- Grab the opportunity to make some space
+        inputs = nil; targets = nil; collectgarbage();
+        -- Pre-allocate mini batch space
+        if (trainData.data[1]:nDimension() == 1) then
+          inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
+        else
+          inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+        end
+        targets = torch.zeros(bSize);
+        -- Switch data to cuda
+        if options.cuda then
+          inputs = inputs:cuda();
+          targets = targets:cuda();
+        end
       end
-      local targets = torch.zeros(bSize)
       local k = 1;
-      -- Switch data to cuda
-      if options.cuda then
-	 inputs = inputs:cuda();
-	 targets = targets:cuda();
-      end
       -- iterate over mini-batch examples
       for i = t,math.min(t+options.batchSize-1,trainData.data:size(1)) do
          -- load new sample
-         local input = trainData.data[shuffle[i]]
-         local target = trainData.labels[shuffle[i]]
-         if options.type == 'double' then input = input:double() end
-         if options.cuda then input = input:cuda() end
-         inputs[k] = input;
-         targets[k] = target;
+         inputs[k] = trainData.data[shuffle[i]];
+         targets[k] = trainData.labels[shuffle[i]];
          k = k + 1
       end
       if options.cuda then inputs = inputs:cuda(); end
@@ -372,25 +384,38 @@ function supervisedTest(model, testData, options)
    -- TODO
    -- set model to evaluate mode (for modules that differ in training and testing, like Dropout)
    model:evaluate();
+   -- Pre-allocate mini batch space
+   local inputs = {};
+   if (trainData.data[1]:nDimension() == 1) then
+      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1))
+   else
+      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+   end
+   local targets = torch.zeros(options.batchSize);
+   -- Switch data to cuda
+   if options.cuda then
+      inputs = inputs:cuda();
+      targets = targets:cuda();
+   end
    -- test over test data
    print('==> testing on test set:')
    for t = 1,testData.data:size(1),options.batchSize do
       -- disp progress
-      xlua.progress(t, testData.data:size(1))
-      -- create mini batch
-      local inputs = {};
+      --xlua.progress(t, testData.data:size(1))
       -- Check size of batch (for last smaller)
       bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
-      if (testData.data[1]:nDimension() == 1) then
-	 inputs = torch.Tensor(bSize, testData.data[1]:size(1))
-      else
-	 inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
-      end
-      local targets = torch.Tensor(bSize)
-      -- Switch data to GPU
-      if options.cuda then
-	 inputs = inputs:cuda();
-	 targets = targets:cuda();
+      if (bSize ~= options.batchSize) then
+	 if (trainData.data[1]:nDimension() == 1) then
+	    inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
+	 else
+	    inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+	 end
+	 targets = torch.zeros(bSize);
+	 -- Switch data to cuda
+	 if options.cuda then
+	    inputs = inputs:cuda();
+	    targets = targets:cuda();
+	 end
       end
       -- iterate over mini-batch examples
       local k = 1;
@@ -398,8 +423,6 @@ function supervisedTest(model, testData, options)
 	 inputs[k] = testData.data[i];
 	 targets[k] = testData.labels[i];
 	 k = k + 1;
-         --table.insert(inputs, input)
-         --table.insert(targets, target)
       end
       -- test sample
       local pred = model:forward(inputs)
@@ -412,7 +435,7 @@ function supervisedTest(model, testData, options)
    -- timing
    time = sys.clock() - time
    time = time / testData.data:size(1)
-   print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+   --print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
    -- print confusion matrix
    print(confusion)
    -- update log/plot
@@ -436,69 +459,51 @@ end
 -- Mainly used for recurrent networks
 ----------------------------------------------------------------------
 function unsupervisedTable(model, testData, params)
-   -- are we using the hessian?
-   if params.hessian then
-      model:initDiagHessianParameters()
-   end
-   -- set model to training mode (for modules that differ in training and testing, like Dropout)
-   model:training();
-   -- get all parameters
-   x,dl_dx,ddl_ddx = model:getParameters();
-   -- training errors
-   local err = 0
-   local iter = 0
-   for t = 1,math.min(params.maxIter, (testData.data[1]:size(1)-params.batchSize)),params.batchSize do
-      -- progress
-      iter = iter+1
-      xlua.progress(iter*params.batchSize, testData.data[1]:size(1));
-      -- create mini batch
-      local inputs = {};
-      local targets = {};
-      -- Check size of batch (for last smaller)
-      bSize = math.min(options.batchSize, testData.data[1]:size(1) - t + 1);
-      if (testData.data[1]:nDimension() == 2) then
-	 for i = 1,#testData.data do
-	    inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
-	    targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
-	    if options.cuda then inputs[i]:cuda(); end
-	 end
-      else
-	 for i = 1,#testData.data do
-	    inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
-	    targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
-	    if options.cuda then inputs[i]:cuda(); end
-	 end
-      end
-      -- iterate over mini-batch examples
-      for k = 1,#testData.data do
-	 for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-	    inputs[k] = testData.data[k][i];
-	    targets[k] = testData.data[k][i];
-	    --
-	    -- TODO
-	    -- This is where to add noise, warp, outliers...
-	    -- Or should this be done inside the construction of the
-	    -- unsupervised dataset?
-	    -- TODO
-	    --
-	    -- REMOVED this, useless in a for loop
-	    -- k = k + 1
-	 end
-      end
-      -- define eval closure
-      local feval = function()
-	 -- reset gradient/f
-	 local f = 0
-	 dl_dx:zero()
-	 -- estimate f and gradients, for minibatch
-	 f = f + model:updateOutput(inputs, targets)
-	 -- compute gradients
-	 model:updateGradInput(inputs, targets)
-	 model:accGradParameters(inputs, targets)
-	 -- normalize
-	 -- dl_dx:div(#inputs); f = f/#inputs;
-	 -- return f and df/dx
-	 return f,dl_dx
+  -- are we using the hessian?
+  if params.hessian then
+    model:initDiagHessianParameters()
+  end
+  -- set model to training mode (for modules that differ in training and testing, like Dropout)
+  model:training();
+  -- get all parameters
+  x,dl_dx,ddl_ddx = model:getParameters();
+  -- training errors
+  local err = 0
+  local iter = 0
+  -- create mini batch
+  local inputs = {};
+  local targets = {};
+  if (testData.data[1]:nDimension() == 2) then
+    for i = 1,#testData.data do
+      inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+      targets[i] = torch.Tensor(bSize, testData.data[1]:size(2))
+      if options.cuda then inputs[i]:cuda(); targets[i]:cuda(); end
+    end
+  else
+    for i = 1,#testData.data do
+      inputs[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+      targets[i] = torch.Tensor(bSize, testData.data[1]:size(2), testData.data[1]:size(3))
+      if options.cuda then inputs[i]:cuda(); targets[i]:cuda(); end
+    end
+  end
+  for t = 1,math.min(params.maxIter, (testData.data[1]:size(1)-params.batchSize)),params.batchSize do
+    -- progress
+    iter = iter+1
+    --xlua.progress(iter*params.batchSize, testData.data[1]:size(1));
+    -- Check size of batch (for last smaller)
+    bSize = math.min(options.batchSize, testData.data[1]:size(1) - t + 1);
+    -- iterate over mini-batch examples
+    for k = 1,#testData.data do
+      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+        inputs[k] = testData.data[k][i];
+        targets[k] = testData.data[k][i];
+        --
+        -- TODO
+        -- This is where to add noise, warp, outlier, etc ...
+        -- Or should I do this inside the construction of the unsupervised dataset ?
+        -- TODO
+        --
+        k = k + 1;
       end
       -- optimize on current mini-batch
       _,fs = optimMethod(feval, x, optimState)
@@ -527,89 +532,87 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function unsupervisedTrain(model, testData, params)
-   -- check if we are working with a table
-   if torch.type(testData.data) == 'table' then
-      return unsupervisedTable(model, testData, params);
-   end
-   -- are we using the hessian?
-   if params.hessian then
-      model:initDiagHessianParameters()
-   end
-   -- set model to training mode (for modules that differ in training and testing, like Dropout)
-   model:training();
-   -- get all parameters
-   x,dl_dx,ddl_ddx = model:getParameters();
-   -- training errors
-   local err = 0
-   local iter = 0
-   for t = 1, math.min(params.maxIter, (testData.data:size(1)-params.batchSize)), params.batchSize do
-      -- update diagonal hessian parameters
-      if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
-	 -- some extra vars:
-	 local hessiansamples = params.hessiansamples
-	 local minhessian = params.minhessian
-	 local maxhessian = params.maxhessian
-	 local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
-	 etas = etas or ddl_ddx:clone()
-	 for i = 1,hessiansamples do
-	    -- next
-	    local ex = testData.data[i];
-	    if options.cuda then ex:cuda(); end
-	    local input = ex;
-	    local target = ex;
-	    model:updateOutput(input, target)
-	    -- gradient
-	    dl_dx:zero()
-	    model:updateGradInput(input, target)
-	    model:accGradParameters(input, target)
-	    -- hessian
-	    ddl_ddx:zero()
-	    model:updateDiagHessianInput(input, target)
-	    model:accDiagHessianParameters(input, target)
-	    -- accumulate
-	    ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
-	 end
-	 -- cap hessian params
-	 print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-	 ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
-	 ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
-	 print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
-	 -- generate learning rates
-	 etas:fill(1):cdiv(ddl_ddx_avg)
+  -- check if we are working with a table
+  if torch.type(testData.data) == 'table' then
+    return unsupervisedTable(model, testData, params);
+  end
+  -- are we using the hessian?
+  if params.hessian then
+    model:initDiagHessianParameters()
+  end
+  -- set model to training mode (for modules that differ in training and testing, like Dropout)
+  model:training();
+  -- get all parameters
+  x,dl_dx,ddl_ddx = model:getParameters();
+  -- training errors
+  local err = 0
+  local iter = 0
+  -- create mini batch
+  local inputs = {};
+  local targets = {};
+  if (testData.data[1]:nDimension() == 1) then
+    inputs = torch.Tensor(options.batchSize, testData.data[1]:size(1))
+    targets = torch.Tensor(options.batchSize, testData.data[1]:size(1))
+  else
+    inputs = torch.Tensor(options.batchSize, testData.data[1]:size(1), testData.data[1]:size(2))
+    targets = torch.Tensor(options.batchSize, testData.data[1]:size(1), testData.data[1]:size(2))
+  end
+  if options.cuda then inputs = inputs:cuda(); targets = targets:cuda(); end
+  for t = 1,math.min(params.maxIter, (testData.data:size(1)-params.batchSize)),params.batchSize do
+    -- update diagonal hessian parameters
+    if params.hessian and math.fmod(t , params.hessianinterval) == 1 then
+      -- some extra vars:
+      local hessiansamples = params.hessiansamples
+      local minhessian = params.minhessian
+      local maxhessian = params.maxhessian
+      local ddl_ddx_avg = ddl_ddx:clone(ddl_ddx):zero()
+      etas = etas or ddl_ddx:clone()
+      for i = 1,hessiansamples do
+        -- next
+        local ex = testData.data[i];
+        if options.cuda then ex:cuda(); end
+        local input = ex;
+        local target = ex;
+        model:updateOutput(input, target)
+        -- gradient
+        dl_dx:zero()
+        model:updateGradInput(input, target)
+        model:accGradParameters(input, target)
+        -- hessian
+        ddl_ddx:zero()
+        model:updateDiagHessianInput(input, target)
+        model:accDiagHessianParameters(input, target)
+        -- accumulate
+        ddl_ddx_avg:add(1/hessiansamples, ddl_ddx)
       end
-      -- progress
-      iter = iter+1
-      xlua.progress(iter*params.batchSize, testData.data:size(1));
-      -- create mini batch
-      local inputs = {};
-      local targets = {};
-      -- Check size of batch (for last smaller)
-      bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
-      if (testData.data[1]:nDimension() == 1) then
-	 inputs = torch.Tensor(bSize, testData.data[1]:size(1))
-	 targets = torch.Tensor(bSize, testData.data[1]:size(1))
-      else
-	 inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
-	 targets = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
-      end
-      -- iterate over mini-batch examples
-      local k = 1;
-      if options.cuda then inputs = inputs:cuda(); targets = targets:cuda(); end
-      for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
-	 inputs[k] = testData.data[i];
-	 targets[k] = testData.data[i];
-	 --if options.cuda then inputs[k] = inputs[k]:cuda(); targets[k] = targets[k]:cuda(); end
-	 
-	 --
-	 -- TODO
-	 -- This is where to add noise, warp, outlier, etc ...
-	 -- Or should I do this inside the construction of the unsupervised dataset ?
-	 -- TODO
-	 --
-	 
-	 k = k + 1;
-         --table.insert(inputs, input)
-         --table.insert(targets, target)
+      -- cap hessian params
+      print('==> ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+      ddl_ddx_avg[torch.lt(ddl_ddx_avg,minhessian)] = minhessian
+      ddl_ddx_avg[torch.gt(ddl_ddx_avg,maxhessian)] = maxhessian
+      print('==> corrected ddl/ddx : min/max = ' .. ddl_ddx_avg:min() .. '/' .. ddl_ddx_avg:max())
+      -- generate learning rates
+      etas:fill(1):cdiv(ddl_ddx_avg)
+    end
+    -- progress
+    iter = iter+1
+    --xlua.progress(iter*params.batchSize, testData.data:size(1));
+    -- iterate over mini-batch examples
+    -- Check size of batch (for last smaller)
+    local bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
+    local k = 1;
+    for i = t,math.min(t+options.batchSize-1,testData.data:size(1)) do
+      inputs[k] = testData.data[i];
+      targets[k] = testData.data[i];
+      --if options.cuda then inputs[k] = inputs[k]:cuda(); targets[k] = targets[k]:cuda(); end
+        
+        --
+        -- TODO
+        -- This is where to add noise, warp, outlier, etc ...
+        -- Or should I do this inside the construction of the unsupervised dataset ?
+        -- TODO
+        --
+        
+        k = k + 1;
       end
       -- define eval closure
       local feval = function()
@@ -691,37 +694,38 @@ end
 --  . type          ('float')     - type of the data: float|double|cuda
 --
 function unsupervisedTest(model, testData, params)
-   -- check if we are working with a table
-   if torch.type(testData.data) == 'table' then
-      return unsupervisedTestTable(model, testData, params);
-   end
-   -- training errors
-   local err = 0
-   local iter = 0
-   local time = sys.clock();
-   -- Switch model to evaluate mode
-   model:evaluate();
-   if options.cuda then testData.data = testData.data:cuda(); end
-   err = err + model:updateOutput(testData.data:clone(), testData.data:clone())
-   --for i = 1,testData.data:size(1) do
-   -- progress
-   --  iter = iter+1
-   --  xlua.progress(iter*params.batchSize, params.statinterval)
-   -- create mini-batch
-   --  local example = testData.data[t]
-   -- load new sample
-   --  local sample = testData.data[i]
-   --  if options.cuda then sample:cuda(); end
-   --  local input = sample:clone()
-   --  local target = sample:clone()
-   --  err = err + model:forward(input, target)
-   --end
-   -- timing
-   time = sys.clock() - time
-   time = time / testData.data:size(1)
-   print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
-   err = err / testData.data:size(1);
-   return err;
+  -- check if we are working with a table
+  if torch.type(testData.data) == 'table' then
+    return unsupervisedTestTable(model, testData, params);
+  end
+  -- training errors
+  local err = 0
+  local iter = 0
+  local time = sys.clock();
+  -- Switch model to evaluate mode
+  model:evaluate();
+  if options.cuda then testDataTmp = testData.data:cuda(); end
+  -- PRIOR TO THAT I WAS CLONING BOTH OF THEM
+  err = err + model:updateOutput(testDataTmp, testDataTmp)
+  --for i = 1,testData.data:size(1) do
+    -- progress
+  --  iter = iter+1
+  --  xlua.progress(iter*params.batchSize, params.statinterval)
+    -- create mini-batch
+  --  local example = testData.data[t]
+    -- load new sample
+  --  local sample = testData.data[i]
+  --  if options.cuda then sample:cuda(); end
+  --  local input = sample:clone()
+  --  local target = sample:clone()
+  --  err = err + model:forward(input, target)
+  --end
+  -- timing
+  time = sys.clock() - time
+  time = time / testData.data:size(1)
+  --print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
+  err = err / testData.data:size(1);
+  return err;
 end
 
 --

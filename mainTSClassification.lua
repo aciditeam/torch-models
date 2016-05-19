@@ -134,7 +134,7 @@ for key,value in ipairs(setList) do
 end
 if options.dataAugmentation then
    print " - Performing data augmentation";
-   --sets = data_augmentation(sets);
+   sets = data_augmentation(sets);
 end
 
 ----------------------------------------------------------------------
@@ -240,126 +240,63 @@ for k, v in ipairs(modelsList) do
 	 unsupData.data = unsupData.data:cuda();
 	 unsupValid.data = unsupValid.data:cuda();
       end
-      -- Set of trained layers
-      trainedLayers = {};
-      for l = 1,structure.nLayers do
-	 -- Define the pre-training model
-	 local model = curModel:definePretraining(structure, l, options);
-	 print(tostring(model));
-	 -- Activate CUDA on the model
-	 if options.cuda then model:cuda(); end
-	 -- If classical learning configure the optimizer
-	 if (not options.adaptiveLearning) then 
-	    if torch.type(unsupData.data) ~= 'table' then
-	       configureOptimizer(options, unsupData.data:size(2))
-	    else
-	       configureOptimizer(options, #unsupData.data);
-	    end   
+      epoch = 0;
+      prevValid = 5e20;
+      while epoch < options.maxEpochs do
+	 print("Epoch #" .. epoch);
+	 --[[ Adaptive learning ]]--
+	 if options.adaptiveLearning then
+	    -- 1st epochs = Start with purely stochastic (SGD) on single examples
+	    if epoch == 0 then configureOptimizer({optimization = 'SGD', batchSize = 5, learningRate = 5e-3}, unsupData.data:size(2)); end
+	    -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
+	    if epoch == options.subLinearEpoch then configureOptimizer({optimization = 'SGD', batchSize = 128, learningRate = 2e-3}, unsupData.data:size(2)); end
+	    -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
+	    if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
 	 end
-	 epoch = 0;
-	 prevValid = 5e20;
-	 while epoch < options.maxEpochs do
-	    print("Epoch #" .. epoch);
-	    --[[ Adaptive learning ]]--
-	    if options.adaptiveLearning then
-	       -- 1st epochs = Start with purely stochastic (SGD) on single examples
-	       if epoch == 0 then
-		  configureOptimizer({optimization = 'SGD', batchSize = 5,
-				      learningRate = 5e-3},
-		     unsupData.data:size(2));
-	       end
-	       -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
-	       if epoch == options.subLinearEpoch then
-		  configureOptimizer({optimization = 'SGD', batchSize = 128,
-				      learningRate = 2e-3},
-		     unsupData.data:size(2));
-	       end
-	       -- Remaining epochs = Advanced learning algorithm user-selected
-	       -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
-	       if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
+	 --[[ Unsupervised pre-training ]]--
+	 -- Perform unsupervised training of the model
+	 error = curModel:unsupervisedTrain(model, unsupData, options);
+	 print("Reconstruction error (train) : " .. error);
+	 --[[ Validation set checking ]]--
+	 if epoch % options.validationRate == 0 then
+	    -- Check reconstruction error on the validation data
+	    validError = curModel:unsupervisedTest(model, unsupValid, options);
+	    print("Reconstruction error (valid) : " .. validError);
+	    -- The validation error has risen since last checkpoint
+	    if validError > prevValid then
+	       -- Reload the last saved model
+	       torch.load('results/model-pretrain-layer' .. l .. '.net');
+	       -- Stop the learning
+	       print(" => Stop learning");
+	       break; 
 	    end
-	    --[[ Unsupervised pre-training ]]--
-	    -- Perform unsupervised training of the model
-	    error = curModel:unsupervisedTrain(model, unsupData, options);
-	    print("Reconstruction error (train) : " .. error);
-	    --[[ Validation set checking ]]--
-	    if epoch % options.validationRate == 0 then
-	       -- Check reconstruction error on the validation data
-	       validError = curModel:unsupervisedTest(model, unsupValid,
-						      options);
-	       print("Reconstruction error (valid) : " .. validError);
-	       -- The validation error has risen since last checkpoint
-	       if validError > prevValid then
-		  -- Reload the last saved model
-		  torch.load('results/model-pretrain-layer' .. l .. '.net');
-		  -- Stop the learning
-		  print(" => Stop learning");
-		  break; 
-	       end
-	       -- Otherwise save the current model
-	       torch.save('results/model-pretrain-layer' .. l .. '.net',
-			  model);
-	       -- Keep the current error
-	       prevValid = validError;
-	    end
-	    epoch = epoch + 1;
-	    -- Collect the garbage
-	    collectgarbage();
+	    -- Otherwise save the current model
+	    torch.save('results/model-pretrain-layer' .. l .. '.net', model);
+	    -- Keep the current error
+	    prevValid = validError;
 	 end
-	 -- Keep trained layer in table
-	 trainedLayers[l] = model;
-	 -- Retrieve the encoding layer only
-	 model = curModel:retrieveEncodingLayer(model)
-	 -- Put model in evaluation mode
-	 model:evaluate();
-	 -- Prepare a set of activations
-	 forwardedData = {data = {}};
-	 forwardedValid = {data = {}};
-	 -- Perform forward propagation on data
-	 forwardedData.data = model:forward(unsupData.data);
-	 if torch.type(forwardedData.data) ~= 'table' then
-	    forwardedData.data = forwardedData.data:clone()
-	 else
-	    for i = 1,#forwardedData.data do
-	       forwardedData.data[i] = forwardedData.data[i]:clone()
-	    end
-	 end
-	 -- Replace previous set
-	 unsupData = forwardedData;
-	 -- Perform forward propagation on validation
-	 forwardedValid.data = model:forward(unsupValid.data);
-	 if torch.type(forwardedValid.data) ~= 'table' then
-	    forwardedValid.data = forwardedValid.data:clone()
-	 else
-	    for i = 1,#forwardedValid.data do
-	       forwardedValid.data[i] = forwardedValid.data[i]:clone()
-	    end
-	 end
-	 -- Replace previous set
-	 unsupValid = forwardedValid;
-	 -- Remove garbage
+	 epoch = epoch + 1;
+	 -- Collect the garbage
+	 print("End of epoch memory count:");
+	 print(collectgarbage("count"));
 	 collectgarbage();
+	 print("End of epoch memory (after collect):");
+	 print(collectgarbage("count"));
       end
-   end
-   ----------------------------------------------------------------------
-   -- Supervised classification code
-   ----------------------------------------------------------------------
-   -- Evaluate over all datasets
-   for key,value in ipairs(setList) do
-      print("    * (MLP) Classifying " .. value);
-      -- Data input size
-      inSize = sets[value]["TRAIN"].data:size(2);
-      -- Retrieve set of unique classes
-      classes = uniqueTensor(sets[value]["TRAIN"].labels);
-      -- Change the number of last layer units
-      structure.nOutputs = #classes;
-      -- Define the model
-      model = curModel:defineModel(structure, options);
-      -- Initialize weights
-      if curModel.pretrain then
-	 model = curModel:weightsTransfer(model, trainedLayers);
-      else
-	 model = curModel:weightsInitialize(model);
+      -- Keep trained layer in table
+      trainedLayers[l] = model;
+      -- Retrieve the encoding layer only
+      model = curModel:retrieveEncodingLayer(model)
+      -- Put model in evaluation mode
+      model:evaluate();
+      -- Prepare a set of activations
+      forwardedData = {data = {}};
+      forwardedValid = {data = {}};
+      collectgarbage();
+      -- Perform forward propagation on data
+      forwardedData.data = model:forward(unsupData.data);
+      if torch.type(forwardedData.data) ~= 'table' then forwardedData.data = forwardedData.data:clone() else
+	 for i = 1,#forwardedData.data do forwardedData.data[i] = forwardedData.data[i]:clone() end
       end
       -- Check the model
       print(tostring(model));
@@ -376,74 +313,107 @@ for k, v in ipairs(modelsList) do
 	 model:cuda();
 	 criterion:cuda();
       end
-      -- This matrix records the current confusion across classes
-      confusion = optim.ConfusionMatrix(classes);
-      -- Log results to files
-      trainLogger = optim.Logger(paths.concat(options.save, 'train.log'));
-      testLogger = optim.Logger(paths.concat(options.save, 'test.log'));
-      -- TODO
-      -- TODO
-      -- Needs more logging / monitoring
-      -- cf. Separate visualize file
-      -- TODO
-      -- TODO
-      -- Flatten all trainable parameters into a 1-dim vector
-      if model then parameters, gradParameters = curModel:getParameters(model); end
-      epoch = 0;
-      validRise = 0;
-      prevValid = 1.0;
-      options.learningRate = 1e-4;
-      configureOptimizer(options, inSize);
-      while epoch < options.maxEpochs do
-	 --[[ Adaptive learning ]]--
-	 if options.adaptiveLearning then
-	    -- 1st epochs = Start with purely stochastic (SGD) on single examples
-	    if epoch == 0 then configureOptimizer({optimization = 'SGD', batchSize = 1, learningRate = 5e-3}, sets[value]["TRAIN"].data:size(2)); end
-	    -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
-	    if epoch == options.subLinearEpoch then
-	       configureOptimizer({optimization = 'SGD', batchSize = 128,
-				   learningRate = 2e-3},
-		  sets[value]["TRAIN"].data:size(2));
-	    end
-	    -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
-	    if epoch == options.superLinearEpoch then
-	       configureOptimizer(options, inSize)
-	    end
-	    -- We will use different learning rates for different layers (based on average size of gradients and weights)
-	    -- learningRate = 0.01 * (avgWeight / avgGradient);
-	    -- Use a decaying learning rate (When validation error rise, divide by decay)
-	    if validRise > 2 then
-	       learningRate = learningRate * learningRateDecay
-	    end
-	 end
-	 --[[ Training data ]]--
-	 trainError = curModel:supervisedTrain(model, sets[value]["TRAIN"],
-					       options);
-	 confusion:zero();
-	 --[[ Validation testing ]]--
-	 validError = curModel:supervisedTest(model, sets[value]["VALID"],
-					      options);
-	 confusion:zero();
-	 -- Add a new iteration of increase in validation error
-	 if validError > prevValid then
-	    validRise = validRise + 1;
-	 else
-	    validRise = 0
-	 end
-	 -- Check if we need to break the learning
-	 if validRise >= options.maxValidRise then break; end
-	 prevValid = validError;
-	 --[[ Test dataset evluation ]]--
-	 testError = curModel:supervisedTest(model, sets[value]["TEST"],
-					     options);
-	 confusion:zero();
-	 
-	 -- Periodically collect statistics and monitor
-	 -- Visualize all these
-	 print('Train error = ' .. trainError);
-	 print('Valid error = ' .. validError);
-	 print('Test error = ' .. testError);
-	 
-      end
+      -- Replace previous set
+      unsupValid = forwardedValid;
+      -- Remove garbage
+      collectgarbage();
    end
+end
+----------------------------------------------------------------------
+-- Supervised classification code
+----------------------------------------------------------------------
+-- File to write results of current model$
+resFile = io.open("results/classification_" .. k .. ".txt", "w")
+-- Evaluate over all datasets
+for key,value in ipairs(setList) do
+   -- Start by collecting garbage
+   collectgarbage();
+   print("    * (MLP) Classifying " .. value);
+   resFile:write(value, "\t");
+   -- Data input size
+   inSize = sets[value]["TRAIN"].data:size(2);
+   -- Retrieve set of unique classes
+   classes = uniqueTensor(sets[value]["TRAIN"].labels);
+   -- Change the number of last layer units
+   structure.nOutputs = #classes;
+   -- Define the model
+   model = curModel:defineModel(structure, options);
+   -- Initialize weights
+   if curModel.pretrain then
+      model = curModel:weightsTransfer(model, trainedLayers);
+   else
+      model = curModel:weightsInitialize(model);
+   end
+   -- Check the model
+   print(tostring(model));
+   -- Define the classification criterion
+   model, criterion = curModel:defineCriterion(model);
+   -- TODO
+   -- TODO
+   -- Sub-loop on hyper-parameter optimization !
+   -- Also for criterion !
+   -- TODO
+   -- TODO
+   -- Eventual CUDA support
+   if options.cuda then
+      model:cuda();
+      criterion:cuda();
+   end
+   -- This matrix records the current confusion across classes
+   confusion = optim.ConfusionMatrix(classes);
+   -- Log results to files
+   trainLogger = optim.Logger(paths.concat(options.save, 'train.log'));
+   testLogger = optim.Logger(paths.concat(options.save, 'test.log'));
+   -- TODO
+   -- TODO
+   -- Needs more logging / monitoring
+   -- cf. Separate visualize file
+   -- TODO
+   -- TODO
+   -- Flatten all trainable parameters into a 1-dim vector
+   if model then parameters, gradParameters = curModel:getParameters(model); end
+   epoch = 0;
+   validRise = 0;
+   prevValid = 1.0;
+   options.learningRate = 1e-4;
+   configureOptimizer(options, inSize);
+   while epoch < options.maxEpochs do
+      --[[ Adaptive learning ]]--
+      if options.adaptiveLearning then
+	 -- 1st epochs = Start with purely stochastic (SGD) on single examples
+	 if epoch == 0 then configureOptimizer({optimization = 'SGD', batchSize = 1, learningRate = 5e-3}, sets[value]["TRAIN"].data:size(2)); end
+	 -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
+	 if epoch == options.subLinearEpoch then configureOptimizer({optimization = 'SGD', batchSize = 128, learningRate = 2e-3}, sets[value]["TRAIN"].data:size(2)); end
+	 -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
+	 if epoch == options.superLinearEpoch then configureOptimizer(options, inSize); end
+	 -- We will use different learning rates for different layers (based on average size of gradients and weights)
+	 -- learningRate = 0.01 * (avgWeight / avgGradient);
+	 -- Use a decaying learning rate (When validation error rise, divide by decay)
+	 if validRise > 2 then learningRate = learningRate * learningRateDecay; end
+      end
+      --[[ Training data ]]--
+      trainError = curModel:supervisedTrain(model, sets[value]["TRAIN"], options);
+      confusion:zero();
+      --[[ Validation testing ]]--
+      validError = curModel:supervisedTest(model, sets[value]["VALID"], options);
+      confusion:zero();
+      -- Add a new iteration of increase in validation error
+      if validError > prevValid then validRise = validRise + 1; else validRise = 0 end
+      -- Check if we need to break the learning
+      if validRise >= options.maxValidRise then break; end
+      prevValid = validError;
+      --[[ Test dataset evluation ]]--
+      testError = curModel:supervisedTest(model, sets[value]["TEST"], options);
+      confusion:zero();
+      
+      -- Periodically collect statistics and monitor
+      -- Visualize all these
+      print('Train error = ' .. trainError);
+      print('Valid error = ' .. validError);
+      print('Test error = ' .. testError);
+      collectgarbage();
+   end
+   resFile:write(testError, "\n");
+end
+resFile:close();
 end

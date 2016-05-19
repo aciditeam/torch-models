@@ -64,6 +64,7 @@ end
 ----------------------------------------------------------------------
 -- Helper functions
 ----------------------------------------------------------------------
+
 local function make_structure(inputData, classes)
    -- Transform raw data to structure
    local structure = {
@@ -212,7 +213,12 @@ function M.data_augmentation(sets)
       local newSeries = torch.zeros(seriesMissing, seriesSize);
       newSeriesID = torch.rand(seriesMissing):mul(curNbSeries):floor():add(1);
       newLabels = trainData.labels.index(trainData.labels, 1, newSeriesID:long());
+      collectgarbage();
       for s = 1,seriesMissing do
+        if (s % 1000) == 0 then
+          collectgarbage();
+          print(s);
+        end
         local tmpSeries = trainData.data[newSeriesID[s]]:clone();
         local keptSeries = tmpSeries;
         curDensification = math.floor(math.random() * 4);
