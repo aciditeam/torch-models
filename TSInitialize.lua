@@ -7,7 +7,7 @@
 ----------------------------------------------------------------------
 
 
-local main_parameters = require './mainParameters'
+require './mainParameters'
 local ts_import = require './datasets/importTSDataset'
 local preprocess = require './datasets/mainPreprocess'
 
@@ -24,7 +24,7 @@ local M = {}
 --  * use_cuda, a boolean: whether to enable CUDA processing
 function M.get_options(use_cuda)
    -- Create a default configuration
-   options = main_parameters.setDefaultConfiguration();
+   options = setDefaultConfiguration();
    -- Override some parameters
    options.visualize = true;
    if use_cuda then

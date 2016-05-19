@@ -1,34 +1,23 @@
 -- Sample a random filename from a directory structure
 
-local diriter = require 'diriter'
+local diriter = require './diriter'
 
 local M = {}
 
-local function is_suffix(str, suffix)
-   return suffix=='' or string.sub(str,-string.len(suffix))==suffix
-end
-
--- Convert iterator as returned by diriter.dirtree to array
--- Specialized for diriter.dirtree iterator, returning only
-local function diriter_to_array(filter_suffix, ...)
-   local arr = {}
-   local i = 1
-   for filename, attr in ... do
-      if attr.mode == 'file' and is_suffix(filename, filter_suffix) then 
-	 arr[i] = filename
-	 i = i+1
-      end
-   end
-   return arr
-end
-
 -- Extract a subset from elems indexed by table indexes
-local function take_subset(elems, indexes)
+local function get_subset(elems, indexes)
    local subset = {}
    for i=1, #indexes do
       table.insert(subset, elems[indexes[i]]) 
    end
    return subset
+end
+
+-- Extract a subset from elems indexed by table indexes
+function M.get_random_subset(elems, sample_size)
+   local indexes = torch.randperm(#elems):sub(1, sample_size):totable()
+   local sample = get_subset(elems, indexes)
+   return sample
 end
 
 -- Initialize filename sampling function for the chosen folder.
@@ -44,7 +33,7 @@ end
 function M.get_generator(root_path, filter_suffix)
    local suffix = suffix or ''
    local dir_iterator = diriter.dirtree(root_path)
-   local filenames = diriter_to_array(filter_suffix, dir_iterator)
+   local filenames = diriter.to_array(filter_suffix, dir_iterator)
    local files_n = #filenames
 
    return function(sample_size)
@@ -53,8 +42,8 @@ function M.get_generator(root_path, filter_suffix)
       -- draw sample_size unique filenames
       -- TODO: a full files_n permutation is sub-optimal, but how
       -- to make it better?
-      local indexes = torch.randperm(files_n):sub(1, sample_size):totable()
-      return take_subset(filenames, indexes)
+      local sample = get_random_subset(filenames, sample_size)
+      return sample
    end
 end
 

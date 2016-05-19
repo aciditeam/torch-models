@@ -45,4 +45,22 @@ function diriter.dirtree(dir)
    end
 end
 
+local function is_suffix(str, suffix)
+   return suffix=='' or string.sub(str,-string.len(suffix))==suffix
+end
+
+-- Convert iterator as returned by diriter.dirtree to array
+-- Specialized for diriter.dirtree iterator, returning only
+function diriter.to_array(filter_suffix, ...)
+   local arr = {}
+   local i = 1
+   for filename, attr in ... do
+      if attr.mode == 'file' and is_suffix(filename, filter_suffix) then 
+	 arr[i] = filename
+	 i = i+1
+      end
+   end
+   return arr
+end
+
 return diriter

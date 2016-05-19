@@ -4,7 +4,9 @@
 -- 
 -- TODO:
 --  * Partial implementation, complete,
---  * No support for duration getter (!).
+--  * No support for duration getter (!),
+--  * Tensors are converted to doubleTensors.
+--   Check if floatTensors wouldn't be faster.
 ----
 --
 -- ADAPTED FROM Python code by:
@@ -34,21 +36,9 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
--- import os
--- import sys
--- import time
--- import glob
--- import numpy as np
--- try:
---     import hdf5_getters as GETTERS
--- except ImportError:
---     print 'cannot find file hdf5_getters.py'
---     print 'you must put MSongsDB/PythonSrc in your path or import it otherwise'
---     raise
+bt_getters = require './millionSongGetters'
 
-bt_getters = require '../millionSongGetters_minimal.lua'
-
--- bt_getters = {}
+torch.setdefaulttensortype('torch.FloatTensor')
 
 function bt_getters.get_btchromas(h5)
    -- Get beat-aligned chroma from a song file of the Million Song Dataset
@@ -60,9 +50,13 @@ function bt_getters.get_btchromas(h5)
    --                  or None if something went wrong (e.g. no beats)
    --
    -- if string, open and get chromas, if h5, get chromas
+   if type(h5) == 'string' then
+      h5 = bt_getters.open_h5_file_read(h5)
+   end
+
    chromas = bt_getters.get_segments_pitches(h5)
-   segstarts = bt_getters.get_segments_start(h5)
-   btstarts = bt_getters.get_beats_start(h5)
+   segstarts = bt_getters.get_segments_start(h5):float()
+   btstarts = bt_getters.get_beats_start(h5):float()
    -- duration = bt_getters.get_duration(h5)
 
    -- get the series of starts for segments and beats by flattening matrices
@@ -232,7 +226,7 @@ function align_feats(feats, segstarts, btstarts) -- , duration)
    --    warpmat.shape = (304, 708)
    --    btchroma.shape = (304, 12)
    warpmat = get_time_warp_matrix(segstarts, btstarts) --, duration)
-   featchroma = torch.mm(warpmat, feats:t()):t()
+   featchroma = torch.mm(warpmat, feats:t():float()):t()
    if featchroma:nDimension() < 2 then -- sanity check
       return nil
    end
@@ -259,13 +253,13 @@ function get_time_warp_matrix(segstart_v, btstart_v) --, duration)
    -- 		       torch.Tensor({duration}))) -
    --    segstart_v
    local seglen_v = (torch.cat(segstart_v[{{2, segments_n}}],
-			 torch.Tensor({segstart_v[segments_n]}))) -
+			       torch.Tensor({segstart_v[segments_n]}))) -
       segstart_v
    -- btlen_v = (torch.cat(btstart_v[{{2,beats_n}}],
    -- 		      torch.Tensor({duration}))) -
    --    btstart_v
    local btlen_v = (torch.cat(btstart_v[{{2,beats_n}}],
-			torch.Tensor({btstart_v[beats_n]}))) -
+			      torch.Tensor({btstart_v[beats_n]}))) -
       btstart_v
    
    local warpmat_m = torch.zeros(segments_n, beats_n)

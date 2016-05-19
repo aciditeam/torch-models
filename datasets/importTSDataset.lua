@@ -12,14 +12,18 @@ require 'nn'
 require 'torch'
 require 'image'
 require 'mainFFIArrays'
+local preprocess = require './mainPreprocess'
+local diriter = require './diriter'
+local sampleFile = require './sampleFile'
 local ucr = require './ucr/importUCR'
 local msds = require './msds/importMSDS'
-local preprocess = require './mainPreprocess'
+
+local M = {}
 
 ----------------------------------------------------------------------
 -- A real resampling function for time series
 ----------------------------------------------------------------------
-function tensorResampling(data, destSize, type)
+function M.tensorResampling(data, destSize, type)
   -- Set the type of kernel
   local type = type or 'gaussian'
   -- Check properties of input data
@@ -124,7 +128,7 @@ end
 ----------------------------------------------------------------------
 -- Constructing a huge unsupervised dataset (only based on the "train" parts)
 ----------------------------------------------------------------------
-function construct_unsupervised(sets, validPercent)
+function M.construct_unsupervised(sets, validPercent)
   -- Number of datasets
   local nbSets = #sets;
   local sizeSet = 0;
@@ -184,7 +188,7 @@ end
 --  * Eventually crop, scale (sub-sequence selections)
 --  Should plot the corresponding manifold densification
 ----------------------------------------------------------------------
-function data_augmentation(sets)
+function M.data_augmentation(sets)
   -- First collect the overall maximum number of series
   local maxSize = 0;
   local totalSize = 0;
@@ -261,7 +265,7 @@ end
 ----------------------------------------------------------------------
 
 -- Load, organize and optionally preprocess the UCR dataset
-function import_full(sets, setList, options)
+function M.import_full(sets, setList, options)
    local setList = setList or {'all'}
    
    print " - Checking data statistics";
@@ -331,7 +335,7 @@ function import_full(sets, setList, options)
    return sets, unSets
 end
 
-function dataset_loader(dataset, options)
+function M.dataset_loader(dataset, options)
    if not type(dataset) == 'string' then error("Must input chosen dataset") end
 
    local local_importer = function(baseDir, setList, set_import_f)
@@ -349,15 +353,15 @@ function dataset_loader(dataset, options)
       local baseDir = msds.baseDir
       local setList = msds.setList
       
-      local sets = import_ucr_data(baseDir, setList,
-				   options.resampleVal);
+      local sets = import_msds_data(baseDir, setList,
+				    options.resampleVal);
    end
 end
 
 ----------------------------------------------------------------------
 -- Dataset specific import functions
 ----------------------------------------------------------------------
-function import_ucr_data(dirData, setFiles, resampleVal)
+function M.import_ucr_data(dirData, setFiles, resampleVal)
   -- Sets data
   local sets = {};
   -- Types of datasets
@@ -390,33 +394,153 @@ function import_ucr_data(dirData, setFiles, resampleVal)
   return sets;
 end
 
-function import_msds_data(dirData, resampleVal)
-  -- Sets data
-  local sets = {};
-  -- Types of datasets
-  local setsTypes = {"TEST", "TRAIN"};
-  -- Load the datasets (factored)
-  sets['all'] = {};
-  for idT,valType in ipairs(setsTypes) do
-     print("    - Loading " .. value .. " [" .. valType .. "]");
-     -- Get the test and train sets
-     local trainName = dirData .. "/" .. value .. "/" .. value .. "_" .. valType; 
-     
-     -- Parse data-file
-     local finalData = ucr.parse(trainName)
-     
-     if (resampleVal) then
-        finalData = tensorResampling(finalData, resampleVal);
-     end
-     
-     -- Make structure
-     sets[value][valType] = curData;
-  end
-  if (collectgarbage("count") > 1000000) then
-     print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
-     collectgarbage();
-  end
-  -- Just make sure to remove unwanted memory
-  collectgarbage();
-  return sets;
+
+-- Return filenames for training, validation and testing sets in chosen dataset
+--
+-- Return: a three-elements table sets with sets['TRAIN'], sets['VALID'] and
+--  sets['TEST'] filled with filenames
+-- Input:
+--  * dirData, a string: the location of the full dataset
+--  * sets_subfolders, a table of string arrays: the paths to each of the
+--   subsets at stake (training, validation and testing)
+--  * filter_suffix, a string, optional: the suffix of files to keep
+function M.import_sets_filenames(dirData, sets_subfolders, filter_suffix)
+   local filter_suffix = filter_suffix or ''
+   
+   local sets = {}
+   for subsetType, paths in pairs(sets_subfolders) do
+      sets[subsetType] = {}
+      for _, path in ipairs(paths) do
+	 filenames_iterator = diriter.dirtree(dirData .. path)
+	 filenames_table = diriter.to_array(filter_suffix, filenames_iterator)
+	 for _, filename in ipairs(filenames_table) do
+	    table.insert(sets[subsetType], filename)
+	 end
+      end
+   end
+   return sets
 end
+
+-- Iterator factory for a sliding window over a dataset
+--
+-- Each iteration yieds training, validation (and optionnaly) testing subsets
+-- from the dataset.
+-- Input:
+--  * sets, a table of arrays: the dataset over which to iterate
+--  * main_window_size, an integer: the size of the window for the training
+--   subsets.
+--  * sliding_step, an integer: the amount by which to slide the windows
+--   at each iteration.
+function M.get_sliding_window_iterator(sets, main_window_size, sliding_step)
+   local train_examples_num = #sets['TRAIN']
+
+   local function euclidean_division(a, b)
+      local quotient = math.floor(a / b)
+      local remainder = a % b
+      
+      return quotient, remainder
+   end
+
+   local steps_num, remainder_step = euclidean_division(
+      train_examples_num - main_window_size, sliding_step)
+   
+   -- local leftover_examples_n = train_examples_num % main_window_size
+
+   -- Will split the dataset in windows_n windows + the remaining examples
+   -- local windows_num = (train_examples_num - leftover_examples_n) /
+   --    main_window_size
+
+   -- Shuffle the datasets
+   local shuffled_sets = {}
+   for subsetType, subset in pairs(sets) do
+      local shuffle = sampleFile.get_random_subset(subset, #subset)
+      shuffled_sets[subsetType] = shuffle
+   end
+
+   -- Compute size of windows for auxiliary subsets (validation, testing...)
+   -- Sizes are chosen to be of the same ratio as for the training set.
+   local function get_win_step_sizes(elems, subsetType, sizes)
+      local elems_num = #elems
+      local win_size = math.max(
+	 math.floor(elems_num * (main_window_size/train_examples_num)), 1)
+      local step_size, last_step = euclidean_division(elems_num - win_size,
+						      steps_num)
+      sizes[subsetType] = {}
+      sizes[subsetType]['winSize'] = win_size
+      sizes[subsetType]['stepSize'] = step_size
+      sizes[subsetType]['lastStep'] = last_step
+   end
+
+   -- Initialize window sizes for each subsets
+   local sizes = {}
+   for subsetType, subset in pairs(sets) do
+      get_win_step_sizes(subset, subsetType, sizes)
+   end
+   
+   local function make_windows(elems, step_n)
+      if step_n > steps_num then return nil end
+
+      local windowed_sets = {}
+      for subsetType, subset in pairs(sets) do
+	 windowed_sets[subsetType] = {}
+	 
+	 win_size = sizes[subsetType]['winSize']
+	 step_size = sizes[subsetType]['stepSize']
+
+	 -- Get length of step to do now
+	 if step_n < steps_num then
+	    next_step = step_size  -- a normal step
+	 else  -- step_n == steps_num, smaller leftover step
+	    next_step = sizes[subsetType]['lastStep']
+	 end
+	 local win_start = (step_n-1) * step_size + next_step
+	 local win_end = win_start + win_size
+	 for file_n = win_start, win_end do
+	    windowed_sets[subsetType][file_n] = subset[win_start + file_n + 1]
+	 end
+      end
+
+      return windowed_sets
+   end
+   
+   local step_n = 0
+   
+   return function()
+      local windowed_sets = make_windows(elems, step_n)
+      step_n = step_n + 1
+      return windowed_sets
+   end
+end
+
+-- function import_msds_data(dirData, resampleVal)
+--   -- Sets data
+--   local sets = {};
+--   -- Types of datasets
+--   local setsTypes = {"TEST", "TRAIN"};
+--   -- Load the datasets (factored)
+--   sets['all'] = {};
+--   for idT,valType in ipairs(setsTypes) do
+--      print("    - Loading " .. value .. " [" .. valType .. "]");
+--      -- Get the test and train sets
+--      TODO
+
+--      -- Parse data-file
+--      local finalData = msds.parse(trainName)
+     
+--      if (resampleVal) then
+--         finalData = tensorResampling(finalData, resampleVal);
+--      end
+     
+--      -- Make structure
+--      sets[value][valType] = curData;
+--   end
+--   if (collectgarbage("count") > 1000000) then
+--      print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
+--      collectgarbage();
+--   end
+--   -- Just make sure to remove unwanted memory
+--   collectgarbage();
+--   return sets;
+-- end
+
+return M

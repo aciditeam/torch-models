@@ -36,6 +36,8 @@
 
 local hdf5 = require 'hdf5'
 
+torch.setdefaulttensortype('torch.FloatTensor')
+
 local getters = {}
 
 -- Segment aligned features

@@ -476,11 +476,13 @@ function unsupervisedTable(model, testData, params)
 	    targets[k] = testData.data[k][i];
 	    --
 	    -- TODO
-	    -- This is where to add noise, warp, outlier, etc ...
-	    -- Or should I do this inside the construction of the unsupervised dataset ?
+	    -- This is where to add noise, warp, outliers...
+	    -- Or should this be done inside the construction of the
+	    -- unsupervised dataset?
 	    -- TODO
 	    --
-	    k = k + 1;
+	    -- REMOVED this, useless in a for loop
+	    -- k = k + 1
 	 end
       end
       -- define eval closure
