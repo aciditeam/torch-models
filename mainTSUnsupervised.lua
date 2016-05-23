@@ -12,7 +12,7 @@ require 'unsup'
 require 'optim'
 require 'torch'
 require 'nninit'
--- require './datasets/importTSDataset'
+require './moduleSlidingWindow'
 local import_dataset = require './importTSDataset'
 require 'mainLearning'
 require 'mainParameters'
@@ -88,7 +88,7 @@ ts_init.set_globals(); ts_init.set_cuda(options)
 -- Initialize datasets
 ----------------------------------------------------------------------
 
-local msds = require './datasets/msds/importMSDS'
+local msds = require './importMSDS'
 
 
 -- local _, unSets = ts_init.import_data(baseDir, setList, options)
@@ -174,22 +174,28 @@ for k, v in ipairs(modelsList) do
 
       local slide_step_train = 10  -- 50
       -- Perform sliding window over the whole dataset (too large to fit in memory)
+      -- Returns batches of training, validation... data as filenames
       for windowed_sets in import_dataset.get_sliding_window_iterator(
 	 unSets, options.batchSize, slide_step_train) do
 
-	 local function map(f, elems)
-	    local f_elems = {}
-	    for _, elem in ipairs(elems) do
-	       table.insert(f_elems, f(elem))
+	 -- Slice all examples in the batch to all have the same duration,
+	 -- allows to put them all in a single tensor for memory efficiency
+	 local f_load = msds.load.get_btchromas
+	 local sliceSize = 128
+
+	 local slices = import_dataset.load_sets_tensor(windowed_sets,
+							f_load, sliceSize)
+
+	 local unsupData = slices['TRAIN']
+	 local unsupValid = slices['VALID']
+
+	 if (not options.adaptiveLearning) then 
+	    if torch.type(unsupData.data) ~= 'table' then
+	       configureOptimizer(options, unsupData.data:size(2))
+	    else
+	       configureOptimizer(options, #unsupData.data);
 	    end
-	    return f_elems
 	 end
-	 
-	 unsupData, unsupValid = {}, {}
-	 unsupData['data'] = map(msds.load.get_btchromas,
-				 windowed_sets['TRAIN'])
-	 unsupValid['data'] = map(msds.load.get_btchromas,
-				  windowed_sets['VALID'])
 	 
 	 while epoch < options.maxEpochs do
 	    print("Epoch #" .. epoch);

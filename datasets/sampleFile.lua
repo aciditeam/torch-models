@@ -42,7 +42,7 @@ function M.get_generator(root_path, filter_suffix)
       -- draw sample_size unique filenames
       -- TODO: a full files_n permutation is sub-optimal, but how
       -- to make it better?
-      local sample = get_random_subset(filenames, sample_size)
+      local sample = M.get_random_subset(filenames, sample_size)
       return sample
    end
 end

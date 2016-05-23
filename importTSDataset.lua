@@ -12,11 +12,13 @@ require 'nn'
 require 'torch'
 require 'image'
 require 'mainFFIArrays'
+
 local preprocess = require './mainPreprocess'
-local diriter = require './diriter'
-local sampleFile = require './sampleFile'
+local diriter = require './datasets/diriter'
+local sampleFile = require './datasets/sampleFile'
 local ucr = require './importUCR'
 local msds = require './importMSDS'
+local nninit = require 'nninit'
 
 local M = {}
 
@@ -88,7 +90,7 @@ end
 ----------------------------------------------------------------------
 -- Constructing a validation set for each dataset
 ----------------------------------------------------------------------
-function construct_validation(sets, validPercent)
+function M.construct_validation(sets, validPercent)
   -- For each dataset
   for v, k in pairs(sets) do
     -- Take only the train set
@@ -518,6 +520,43 @@ function M.get_sliding_window_iterator(sets, main_window_size, sliding_step)
    end
 end
 
+-- Take a set of sequences as filenames and return a tensor of equal-size slices
+-- 
+-- Input:
+--  * sets, a table of string tables: the training, validation... sets,
+--   as filenames
+--  * f_load, a function : string -> sequence: sequence loading function
+--  * splitSize, an integer, optional: the size by which to slice the sequences
+--   (default 128)
+function M.load_sets_tensor(sets, f_load, sliceSize)
+   local sliceSize = sliceSize or 128
+   local slicer = nn.SlidingWindow(1, sliceSize, sliceSize, 1e9, true)
+
+   
+   local function map(f, elems)
+	    local f_elems = {}
+	    for _, elem in ipairs(elems) do
+	       table.insert(f_elems, f(elem))
+	    end
+	    return f_elems
+	 end
+   
+   slicedData = {}
+
+   for subsetType, subset in pairs(sets) do
+      local sequences = map(f_load, subset)
+      slicedData[subsetType] = {}
+      slicedData[subsetType]['data'] = torch.zeros(1, sliceSize,
+						   sequences[1]:size(2))
+      for _, sequence in pairs(sequences) do
+	 local slices = slicer:forward(sequence)
+	 slicedData[subsetType]['data'] = slicedData[subsetType]['data']:cat(
+	    slices, 1)
+      end
+   end
+   return slicedData
+end
+   
 -- function import_msds_data(dirData, resampleVal)
 --   -- Sets data
 --   local sets = {};

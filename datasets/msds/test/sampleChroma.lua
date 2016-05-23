@@ -1,8 +1,8 @@
 -- Test script: sample a random chromagram from the MSDataset and return it
 
-local sampler = require '../million_song_db/sample.lua'
-local parameters = require '../local_parameters'
+local sampler = require '../sample'
+local msds = require '../../../importMSDS'
 
-local path_to_data = parameters.msds_path
+local path_to_data = msds.subset.path
 
-return sampler.get_chroma_sampler(path_to_data)(10)
+return sampler.get_chroma_sampler(path_to_data)(1000)

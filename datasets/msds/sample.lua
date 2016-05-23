@@ -12,7 +12,6 @@ function M.get_chroma_sampler(root_path)
 
    return function(batch_size)
       local filenames = file_sampler(batch_size)
-      print(filenames)
 
       local batch_size = #filenames
       local bt_chromas_batch = {}

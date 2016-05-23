@@ -4,7 +4,7 @@ local M = {}
 
 M.load = {}
 
-M.load = require './beatAlignedFeats'
+M.load = require './datasets/msds/beatAlignedFeats'
 
 -- Full Million Song Dataset location
 -- M.path = './...'
