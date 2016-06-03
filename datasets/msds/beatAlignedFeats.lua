@@ -4,9 +4,7 @@
 -- 
 -- TODO:
 --  * Partial implementation, complete,
---  * No support for duration getter (!),
---  * Tensors are converted to doubleTensors.
---   Check if floatTensors wouldn't be faster.
+--  * No support for duration getter (!).
 ----
 --
 -- ADAPTED FROM Python code by:
@@ -50,15 +48,29 @@ function bt_getters.get_btchromas(h5)
    --                  or None if something went wrong (e.g. no beats)
    --
    -- if string, open and get chromas, if h5, get chromas
+   local input_is_string
    if type(h5) == 'string' then
+      input_is_string = true  -- close opened file
       h5 = bt_getters.open_h5_file_read(h5)
    end
-
-   chromas = bt_getters.get_segments_pitches(h5)
+   
+   chromas = bt_getters.get_segments_pitches(h5):float()
    segstarts = bt_getters.get_segments_start(h5):float()
    btstarts = bt_getters.get_beats_start(h5):float()
-   -- duration = bt_getters.get_duration(h5)
 
+   if input_is_string then
+      h5:close()
+   end
+   
+   if chromas:numel()== 0 or segstarts:numel()== 0 or btstarts:numel()== 0 then
+      print("WARNING: incomplete HDF5 file, "..
+	       "cannot compute beat-aligned chroma, ")
+      print("\treturning dummy (zeros) chromagram")
+      return torch.zeros(1, 12)
+   end
+   
+   -- duration = bt_getters.get_duration(h5)
+   
    -- get the series of starts for segments and beats by flattening matrices
    -- NOTE: MAYBE USELESS?
    -- result for track: 'TR0002Q11C3FA8332D'
@@ -71,7 +83,7 @@ function bt_getters.get_btchromas(h5)
    if not btchroma then
       return nil
    end
-   -- Actually don't normalize here. TODO: do it in the network.
+   -- TODO: Actually don't normalize here, do it in the network.
    -- Renormalize. Each column max is 1.
    -- maxs = (btchroma:max(1))
    -- maxs:eq(0): -- [np.where(maxs == 0)] = 1

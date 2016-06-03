@@ -402,6 +402,39 @@ function M.import_ucr_data(dirData, setFiles, resampleVal)
   return sets;
 end
 
+-- Extract a subrange from table t 
+local function subrange(t, first, last)
+   local sub = {}
+   for i=first,last do
+      table.insert(sub, t[i])
+   end
+   return sub
+end
+
+-- Standard map over a table of elements
+local function map(f, elems)
+   local f_elems = {}
+   for _, elem in ipairs(elems) do
+      table.insert(f_elems, f(elem))
+   end
+   return f_elems
+end
+
+-- Deep table copy
+function deepcopy(orig)
+   local orig_type = type(orig)
+   local copy
+   if orig_type == 'table' then
+      copy = {}
+      for orig_key, orig_value in next, orig, nil do
+	 copy[deepcopy(orig_key)] = deepcopy(orig_value)
+      end
+      setmetatable(copy, deepcopy(getmetatable(orig)))
+   else -- number, string, boolean, etc
+      copy = orig
+   end
+   return copy
+end
 
 -- Return filenames for training, validation and testing sets in chosen dataset
 --
@@ -430,7 +463,10 @@ function M.import_sets_filenames(dirData, sets_subfolders, filter_suffix)
 end
 
 -- Iterator factory for a sliding window over a dataset
---
+-- 
+-- Return a new tensor of sequence slices of uniform duration, using a sliding
+-- window of the full dataset.
+-- 
 -- Each iteration yieds training, validation (and optionnaly) testing subsets
 -- from the dataset.
 -- Input:
@@ -439,38 +475,57 @@ end
 --   subsets.
 --  * sliding_step, an integer: the amount by which to slide the windows
 --   at each iteration.
-function M.get_sliding_window_iterator(sets, main_window_size, sliding_step)
-   local train_examples_num = #sets['TRAIN']
+--  * slice_size, an integer: the duration with which to split all the
+--   sequences.
+--  * f_load, a function : filename -> torch.Tensor: load a file
+function M.get_sliding_window_iterator(sets, f_load, options)
+   local main_window_size = options.datasetWindowSize
+   local sliding_step = options.datasetWindowStepSize
 
+   local slice_size = options.sliceSize
+
+   local train_examples_num = #sets['TRAIN']
+   local sliding_step = sliding_step or math.floor(main_window_size / 10)
+   
+   -- Avoid skipping some examples because of a step too long
+   if sliding_step > main_window_size then
+      sliding_step = main_window_size
+   end
+   
    local function euclidean_division(a, b)
       local quotient = math.floor(a / b)
       local remainder = a % b
       
       return quotient, remainder
    end
-
+   
    local steps_num, remainder_step = euclidean_division(
       train_examples_num - main_window_size, sliding_step)
    
+   print(steps_num)
+   print(remainder_step)
+   
    -- local leftover_examples_n = train_examples_num % main_window_size
-
+   
    -- Will split the dataset in windows_n windows + the remaining examples
    -- local windows_num = (train_examples_num - leftover_examples_n) /
    --    main_window_size
-
+   
    -- Shuffle the datasets
    local shuffled_sets = {}
    for subsetType, subset in pairs(sets) do
       local shuffle = sampleFile.get_random_subset(subset, #subset)
       shuffled_sets[subsetType] = shuffle
    end
-
+   
    -- Compute size of windows for auxiliary subsets (validation, testing...)
    -- Sizes are chosen to be of the same ratio as for the training set.
    local function get_win_step_sizes(elems, subsetType, sizes)
       local elems_num = #elems
+      local min_win_size = math.min(elems_num, 64)
       local win_size = math.max(
-	 math.floor(elems_num * (main_window_size/train_examples_num)), 1)
+	 math.floor(elems_num * (main_window_size/train_examples_num)),
+	 min_win_size)
       local step_size, last_step = euclidean_division(elems_num - win_size,
 						      steps_num)
       sizes[subsetType] = {}
@@ -478,49 +533,148 @@ function M.get_sliding_window_iterator(sets, main_window_size, sliding_step)
       sizes[subsetType]['stepSize'] = step_size
       sizes[subsetType]['lastStep'] = last_step
    end
-
-   -- Initialize window sizes for each subsets
-   local sizes = {}
+   
+   -- Initialize window sizes and current positions for each subsets
+   local sizes = {}  -- size of window for each subset of the dataset
+   local positions = {}  -- current position of window on the datasets
    for subsetType, subset in pairs(sets) do
       get_win_step_sizes(subset, subsetType, sizes)
+      print(sizes[subsetType])
+      positions[subsetType] = 1
    end
-   
-   local function make_windows(elems, step_n)
-      if step_n > steps_num then return nil end
 
+   -- Slice all examples in the batch to have same duration,
+   -- allows putting them all in a single tensor for memory efficiency
+   local slices
+   -- Used to store number of slices per example, enabling better memory
+   -- management (can update slices variable in place)
+   local slicesNumber
+   
+   local function get_windows(step_n)
+      if step_n > steps_num then return nil end
+      
       local windowed_sets = {}
       for subsetType, subset in pairs(sets) do
 	 windowed_sets[subsetType] = {}
 	 
-	 win_size = sizes[subsetType]['winSize']
-	 step_size = sizes[subsetType]['stepSize']
-
-	 -- Get length of step to do now
+	 local win_size = sizes[subsetType]['winSize']
+	 local step_size = sizes[subsetType]['stepSize']
+	 
+	 -- get length of next step
+	 local next_step
 	 if step_n < steps_num then
 	    next_step = step_size  -- a normal step
-	 else  -- step_n == steps_num, smaller leftover step
+	 else
+	    -- in that case, step_n == steps_num, make smaller step
+	    -- with the remaining files
 	    next_step = sizes[subsetType]['lastStep']
 	 end
-	 local win_start = (step_n-1) * step_size + next_step
-	 local win_end = win_start + win_size
+	 
+	 local win_start = (step_n-1) * step_size + next_step + 1
+	 -- Update positions in dataset
+	 positions[subsetType] = win_start
+	 local win_end = win_start + win_size - 1
+	 
+	 if step_n > 0 then
+	    -- Only return new files within the sliding window
+	    -- (i.e. end of full window)
+	    win_start = win_start + (win_size - next_step)
+	 end
+	 print('New files window: {start = ' ..win_start ..
+	       ', end = ' .. win_end .. '}')
+	 
 	 for file_n = win_start, win_end do
-	    windowed_sets[subsetType][file_n] = subset[win_start + file_n + 1]
+	    windowed_sets[subsetType][1 + file_n-win_start] = subset[file_n]
 	 end
       end
-
+      
       return windowed_sets
+   end
+   
+   local function update_slices(step_n, new_slices, new_slicesNumber,
+				prev_positions)
+      if step_n == 0 then  -- Initialize containers
+	 slicesNumber = new_slicesNumber
+	 slices = new_slices
+      elseif step_n < steps_num then
+	 for subsetType, slicesSubset in pairs(new_slices) do
+	    slicesNumber[subsetType] = slicesNumber[subsetType]:cat(
+	       new_slicesNumber[subsetType], 1)
+	    
+	    -- Trim and extend slices container
+	    -- Get informations for trimming
+	    prev_win_start = prev_positions[subsetType]
+	    step_size = sizes[subsetType]['stepSize']
+	    print(prev_win_start)
+	    print(prev_win_start+step_size-1)
+	    slicesNumbers_erase = subrange(slicesNumber[subsetType],
+					   prev_win_start,
+					   prev_win_start+step_size-1 - 1)
+	    for dataType, slicesSubsetData in pairs(slicesSubset) do
+	       -- Iterate over original examples and targets
+	       
+	       -- Trim left out slices --
+	       -- Compute number of slices to drop
+	       local erase_slices_num_total = 0
+	       for _, erase_slices_num in ipairs(slicesNumbers_erase) do
+		  erase_slices_num_total = erase_slices_num_total +
+		     erase_slices_num
+	       end
+
+	       local current_slices_num = slices[subsetType][dataType]:size(1)
+	       if erase_slices_num_total == current_slices_num then
+		  -- Erase all slices
+		  slices[subsetType][dataType] = nil
+	       else
+		  assert(erase_slices_num_total < current_slices_num,
+			 "Number of slices to delete shouldn't be higher than " ..
+			    "current number of slices")
+		  slices[subsetType][dataType] = slices[subsetType][dataType]:
+		     narrow(1, 1+erase_slices_num_total,
+			    slices[subsetType][dataType]:size(1)-
+			       erase_slices_num_total)
+	       end
+	       collectgarbage()
+	       
+	       -- Add new slices
+	       if slices[subsetType][dataType] then
+		  slices[subsetType][dataType] = slices[subsetType][dataType]:cat(
+		     new_slices[subsetType][dataType], 1)
+	       else  -- all slices were erased, initialize new slices 
+		  slices[subsetType][dataType] = new_slices[subsetType][dataType]
+	       end
+	    end
+	 end
+      end
    end
    
    local step_n = 0
    
    return function()
-      local windowed_sets = make_windows(elems, step_n)
+      if step_n == steps_num then return nil end
+      
+      -- copy previous positions
+      local prev_positions = deepcopy(positions)
+      local windowed_sets = get_windows(step_n)
+      
+      -- Slice all examples in the batch to have same duration,
+      -- allows putting them all in a single tensor for memory efficiency
+      local new_slices, new_slicesNumber = M.load_sets_tensor(
+	 windowed_sets, f_load, sliceSize)
+      
+      update_slices(step_n, new_slices, new_slicesNumber, prev_positions)
+      
       step_n = step_n + 1
-      return windowed_sets
+      
+      return slices
    end
 end
 
 -- Take a set of sequences as filenames and return a tensor of equal-size slices
+-- 
+-- Also return slicesNumber, a table containing for each subset the number
+-- of slices yielded by the files in it, in order, thus allowing to properly
+-- trim slices tensors afterwards.
 -- 
 -- Input:
 --  * sets, a table of string tables: the training, validation... sets,
@@ -528,35 +682,63 @@ end
 --  * f_load, a function : string -> sequence: sequence loading function
 --  * splitSize, an integer, optional: the size by which to slice the sequences
 --   (default 128)
-function M.load_sets_tensor(sets, f_load, sliceSize)
-   local sliceSize = sliceSize or 128
+--  * predictStep, an integer: the duration over which to do the forward
+--   prediction (default 1 step, predict the next item in the sequence)
+function M.load_sets_tensor(sets, f_load, options)
+   local sliceSize = options.sliceSize or 128
+   local predictionLength = options.predictionLength or 1
+   -- Take one more time-sample on each slice for prediction
+   -- Allows to construct prediction targets
    local slicer = nn.SlidingWindow(1, sliceSize, sliceSize, 1e9, true)
-
-   
-   local function map(f, elems)
-	    local f_elems = {}
-	    for _, elem in ipairs(elems) do
-	       table.insert(f_elems, f(elem))
-	    end
-	    return f_elems
-	 end
-   
+      
    slicedData = {}
-
+   slicesNumber = {}
+   
+   -- Adjust duration of sequences to properly extract slices
+   local function zeroPad(sequence)
+      local duration = sequence:size(1)
+      if duration < sliceSize + predictionLength then
+	 local deltaDuration = sliceSize - duration
+	 local zeroPaddedSequence = sequence:cat(
+	    torch.zeros(deltaDuration + predictionLength, sequence:size(2)), 1)
+	 return zeroPaddedSequence
+      else
+	 return sequence
+      end
+   end
+   
    for subsetType, subset in pairs(sets) do
       local sequences = map(f_load, subset)
       slicedData[subsetType] = {}
       slicedData[subsetType]['data'] = torch.zeros(1, sliceSize,
 						   sequences[1]:size(2))
-      for _, sequence in pairs(sequences) do
+      slicedData[subsetType]['targets'] = torch.zeros(1, sliceSize,
+						      sequences[1]:size(2))
+
+      slicesNumber[subsetType] = torch.zeros(#sequences)
+      
+      for sequence_i, sequence in ipairs(sequences) do
+	 local sequence = zeroPad(sequence)
 	 local slices = slicer:forward(sequence)
+	 slicesNumber[subsetType][sequence_i] = slices:size(1)
+
+	 -- TODO: can maybe improve this, could replace added zero (necessary
+	 -- to ensure same number of slices for original sequence and targets)
+	 -- by a value from the actual original sequence
+	 local offsetSequence = sequence:narrow(1, 1+predictionLength,
+						sequence:size(1)-predictionLength):
+	    cat(torch.zeros(predictionLength, sequence:size(2)), 1)
+	 local targetSlices = slicer:forward(offsetSequence)
+	 
 	 slicedData[subsetType]['data'] = slicedData[subsetType]['data']:cat(
 	    slices, 1)
+	 slicedData[subsetType]['targets'] = slicedData[subsetType]['targets']:cat(
+	    targetSlices, 1)
       end
    end
-   return slicedData
+   return slicedData, slicesNumber
 end
-   
+
 -- function import_msds_data(dirData, resampleVal)
 --   -- Sets data
 --   local sets = {};

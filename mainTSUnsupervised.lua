@@ -63,6 +63,8 @@ require 'modelDRAW'
 
 local ts_init = require './TSInitialize'
 
+local saveFolder = '/data/Documents/machine_learning/models/time_series-temp/'
+
 ----------------------------------------------------------------------
 -- Get general options + Optional CUDA usage
 ----------------------------------------------------------------------
@@ -84,12 +86,29 @@ local options = ts_init.get_options(cmd_params.useCuda)
 
 ts_init.set_globals(); ts_init.set_cuda(options)
 
+-- Size of features at each timestep in the training sequences
+-- options.featSize = 12;
+
+options.batchSize = 32;
+
+-- Train to predict next steps
+options.predict = true
+
+-- All sequences will be sliced in to sub-sequences f this duration
+options.sliceSize = 128
+
+-- Not all the dataset is loaded into memory in a single pass,
+-- we perform a sliding window over it, load a subset, perform
+-- some iterations of the optimisation process, then slide the window
+options.datasetWindowSize = 128;
+options.datasetWindowMaxEpochs = 100;
+options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 5) 
+
 ----------------------------------------------------------------------
 -- Initialize datasets
 ----------------------------------------------------------------------
 
 local msds = require './importMSDS'
-
 
 -- local _, unSets = ts_init.import_data(baseDir, setList, options)
 local filter_suffix = '.h5'
@@ -101,11 +120,16 @@ local unSets = import_dataset.import_sets_filenames(msds.subset.path,
 -- Iterating over all potential models
 ----------------------------------------------------------------------
 
+-- To save trained models for future use
+-- (format: year_month_day-hour_minute_second)
+local session_date = os.date('%y_%m_%d-%H_%M_%S', os.time())
+
 -- modelsList = {modelMLP, modelCNN, modelInception, modelVGG};
-modelsList = {modelMLP};
+modelsList = {modelLSTM};
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(modelsList) do
+   print('Start loop on models')
    -- Current model to check
    curModel = v();
    -- Define baseline parameters
@@ -115,14 +139,25 @@ for k, v in ipairs(modelsList) do
    ----------------------------------------------------------------------
    -- Define structure
    structure = {};
-   structure.nLayers = 3;
+   -- Default initialization
+   -- structure.nLayers = 3;
+   -- structure.nInputs = options.resampleVal;
+   -- structure.layers = {1000, 1000, 500, 200};
+   -- structure.nOutputs = 10;
+   -- structure.convSize = {16, 32, 64};
+   -- structure.kernelWidth = {8, 8, 8};
+   -- structure.poolSize = {2, 2, 2};
+   -- structure.nClassLayers = 3;
+   
+   structure.nLayers = 1;
    structure.nInputs = options.resampleVal;
-   structure.layers = {1000, 1000, 500, 200};
-   structure.nOutputs = 10;
-   structure.convSize = {16, 32, 64};
-   structure.kernelWidth = {8, 8, 8};
-   structure.poolSize = {2, 2, 2};
-   structure.nClassLayers = 3;
+   structure.layers = {12, 1000};
+   structure.nOutputs = structure.nInputs;
+   structure.convSize = {16};
+   structure.kernelWidth = {8};
+   structure.poolSize = {2};
+   structure.nClassLayers = 1;
+   
    -- TODO
    -- TODO
    -- Here we should start by
@@ -140,23 +175,47 @@ for k, v in ipairs(modelsList) do
    -- TODO
    -- TODO
    
+   -- Define the model
+   model = curModel:defineModel(structure, options);
+    -- Define the classification criterion
+   model, criterion = curModel:defineCriterion(model);
+   
+   -- Flatten all trainable parameters into a 1-dim vector
+   if model then
+      parameters, gradParameters = curModel:getParameters(model);
+   end
+   
+   -- TODO: Temporary model redefinition
+   model, criterion = nil
+   model = nn.SeqLSTM(12, 12)
+   criterion = nn.MSECriterion()
+   criterion = nn.SequencerCriterion(criterion)
+   
+   local modelName = tostring(model):gsub('%.', '_')
+   
    -- Set of trained layers
    trainedLayers = {};
    
    -- Unsupervised set
    local unsupData = unSets["TRAIN"];
    local unsupValid = unSets["VALID"];
-
+   
    -- Switch training data to GPU
    if options.cuda then
       unsupData.data = unsupData.data:cuda();
       unsupValid.data = unsupValid.data:cuda();
    end
    
-   for l = 1,structure.nLayers do
+   for l = 1, structure.nLayers do
+      print('Start loop on layers')
+      -- To save intermediate results during learning
+      local saveLocation = saveFolder .. 'results/' .. session_date ..
+	 '-model-' .. modelName .. '-pretrain-layer' .. l .. '.net'
+      
       -- Define the pre-training model
-      local model = curModel:definePretraining(structure, l, options);
-      print(tostring(model));
+      -- TODO: disabled this for compatibility, re-enable eventually
+      -- local model = curModel:definePretraining(structure, l, options);
+
       -- Activate CUDA on the model
       if options.cuda then model:cuda(); end
       -- If classical learning configure the optimizer
@@ -168,87 +227,102 @@ for k, v in ipairs(modelsList) do
       -- 	    configureOptimizer(options, #unsupData.data);
       -- 	 end
       -- end
-
-      epoch = 0;
-      prevValid = math.huge;
-
-      local slide_step_train = 10  -- 50
+      
+      local f_load = msds.load.get_btchromas
       -- Perform sliding window over the whole dataset (too large to fit in memory)
       -- Returns batches of training, validation... data as filenames
-      for windowed_sets in import_dataset.get_sliding_window_iterator(
-	 unSets, options.batchSize, slide_step_train) do
-
-	 -- Slice all examples in the batch to all have the same duration,
-	 -- allows to put them all in a single tensor for memory efficiency
-	 local f_load = msds.load.get_btchromas
-	 local sliceSize = 128
-
-	 local slices = import_dataset.load_sets_tensor(windowed_sets,
-							f_load, sliceSize)
-
-	 local unsupData = slices['TRAIN']
-	 local unsupValid = slices['VALID']
-
-	 if (not options.adaptiveLearning) then 
-	    if torch.type(unsupData.data) ~= 'table' then
-	       configureOptimizer(options, unsupData.data:size(2))
-	    else
-	       configureOptimizer(options, #unsupData.data);
-	    end
-	 end
-	 
-	 while epoch < options.maxEpochs do
-	    print("Epoch #" .. epoch);
-	    --[[ Adaptive learning ]]--
-	    if options.adaptiveLearning then
-	       -- 1st epochs = Start with purely stochastic (SGD) on single examples
-	       if epoch == 0 then
-		  configureOptimizer({optimization = 'SGD', batchSize = 5,
-				      learningRate = 5e-3},
-		     unsupData.data:size(2));
-	       end
-	       -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
-	       if epoch == options.subLinearEpoch then
-		  configureOptimizer({optimization = 'SGD', batchSize = 128,
-				      learningRate = 2e-3},
-		     unsupData.data:size(2));
-	       end
-	       -- Remaining epochs = Advanced learning algorithm user-selected
-	       -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
-	       if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
-	    end
+      -- 
+      -- TODO:
+      --  * Must properly close all opened files,
+      --  * Can improve by avoiding to reload previously loaded files,
+      --   really perform a sliding window
+      --   (:narrow() the dataset et :cat() the new data)
+      for slices in import_dataset.get_sliding_window_iterator(
+	 unSets, f_load, options) do
+	 -- print('Start loop on dataset windows')
 	    
-	    --[[ Unsupervised pre-training ]]--
-	    -- Perform unsupervised training of the model
-	    error = curModel:unsupervisedTrain(model, unsupData, options);
-	    print("Reconstruction error (train) : " .. error);
-
-	    --[[ Validation set checking ]]--
-	    if epoch % options.validationRate == 0 then
-	       -- Check reconstruction error on the validation data
-	       validError = curModel:unsupervisedTest(model, unsupValid,
-						      options);
-	       print("Reconstruction error (valid) : " .. validError);
-	       -- The validation error has risen since last checkpoint
-	       if validError > prevValid then
-		  -- Reload the last saved model
-		  torch.load('results/model-pretrain-layer' .. l .. '.net');
-		  -- Stop the learning
-		  print(" => Stop learning");
-		  break; 
-	       end
-	       -- Otherwise save the current model
-	       torch.save('results/model-pretrain-layer' .. l .. '.net',
-			  model);
-	       -- Keep the current error
-	       prevValid = validError;
+	 local unsupValid = slices['VALID']
+	    
+	 local datasetWindowEpoch
+	 -- Perform SGD on this subset of the dataset
+	 for datasetWindowEpoch = 1, options.datasetWindowMaxEpochs do	 
+	    prevValid = math.huge
+	    
+	    -- Create minibatch
+	    local unsupData = {}
+	    -- Gets random indexes for both inputs and targets
+	    local indexes = torch.randperm(slices['TRAIN']['data']:size(1)):
+	       sub(1, options.batchSize):long()
+	    
+	    for dataType, dataSubset in pairs(slices['TRAIN']) do
+	       -- Iterate over inputs and targets
+	       unsupData[dataType] = dataSubset:index(1, indexes)
 	    end
-	    epoch = epoch + 1;
-	    -- Collect the garbage
-	    collectgarbage();
+	       
+	    if (not options.adaptiveLearning) then
+	       if torch.type(unsupData.data) ~= 'table' then
+		  configureOptimizer(options, unsupData.data:size(2))
+	       else
+		  configureOptimizer(options, #unsupData.data);
+	       end
+	    end
+
+	    epoch = 0;
+	    while epoch < options.maxEpochs do
+	       print("Epoch #" .. epoch);
+	       --[[ Adaptive learning ]]--
+	       if options.adaptiveLearning then
+		  -- 1st epochs = Start with purely stochastic (SGD) on single examples
+		  if epoch == 0 then
+		     configureOptimizer({optimization = 'SGD', batchSize = 5,
+					 learningRate = 5e-3},
+			unsupData.data:size(2));
+		  end
+		  -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
+		  if epoch == options.subLinearEpoch then
+		     configureOptimizer({optimization = 'SGD', batchSize = 128,
+					 learningRate = 2e-3},
+			unsupData.data:size(2))
+		  end
+		  -- Remaining epochs = Advanced learning algorithm user-selected
+		  -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX |
+		  --  FISTALS | NAG | RMSPROP | RPROP | CMAES)
+		  if epoch == options.superLinearEpoch then
+		     configureOptimizer(options, unsupData.data:size(2))
+		  end
+	       end
+	       
+	       --[[ Unsupervised pre-training ]]--
+	       -- Perform unsupervised training of the model
+	       err = curModel:unsupervisedTrain(model, unsupData, options);
+	       print("Reconstruction error (train) : " .. err);
+	       
+	       --[[ Validation set checking ]]--
+	       if epoch % options.validationRate == 0 then
+		  -- Check reconstruction error on the validation data
+		  validErr = curModel:unsupervisedTest(model, unsupValid,
+						       options);
+		  print("Reconstruction error (valid) : " .. validErr);
+		  -- The validation error has risen since last checkpoint
+		  if validErr > prevValid then
+		     -- Reload the last saved model
+		     model = torch.load(saveLocation);
+		     -- Stop the learning
+		     print(" => Stop learning");
+		     break;
+		  end
+		  -- Otherwise save the current model
+		  torch.save(saveLocation, model);
+		  -- Keep the current error
+		  prevValid = validErr;
+	       end
+	       epoch = epoch + 1;
+	       -- Collect the garbage
+	       collectgarbage();
+	    end
 	 end
       end
-      
+	 
       -- Keep trained layer in table
       trainedLayers[l] = model;
       -- Retrieve the encoding layer only
@@ -258,7 +332,7 @@ for k, v in ipairs(modelsList) do
       -- Prepare a set of activations
       forwardedData = {data = {}};
       forwardedValid = {data = {}};
-
+      
       -- Perform forward propagation on data
       forwardedData.data = model:forward(unsupData.data);
       if torch.type(forwardedData.data) ~= 'table' then
@@ -268,7 +342,7 @@ for k, v in ipairs(modelsList) do
 	    forwardedData.data[i] = forwardedData.data[i]:clone()
 	 end
       end
-
+      
       -- Replace previous set
       unsupData = forwardedData;
       -- Perform forward propagation on validation

@@ -6,6 +6,40 @@ M.load = {}
 
 M.load = require './datasets/msds/beatAlignedFeats'
 
+-- List disfunctional files and ignore them
+local blacklist = {
+   'TRAAYNQ128EF35922B.h5'
+}
+
+M.__blacklist = blacklist
+
+local use_blacklist = false  -- Disable blacklist for debugging
+
+local function exists(elem, elemsTable, predicate)
+   for _, other_elem in ipairs(elemsTable) do
+      if predicate(elem, other_elem) then return true end
+   end
+   return false
+end
+
+local function is_suffix(str, suffix)
+   return suffix=='' or string.sub(str,-string.len(suffix))==suffix
+end
+
+local local_load = require './datasets/msds/beatAlignedFeats'
+local hdf5 = require 'hdf5'
+
+function M.load.get_btchromas(h5)
+   if type(h5) ~= 'string' then h5 = hdf5.HDF5File.filename(h5) end
+      
+   if exists(h5, blacklist, is_suffix) and use_blacklist then
+      print("WARNING: This hdf5 file has been blacklisted as incompatible" ..
+	       ", skipping it")
+      return torch.zeros(1, 12)
+   end
+   return local_load.get_btchromas(h5)
+end
+
 -- Full Million Song Dataset location
 -- M.path = './...'
 
