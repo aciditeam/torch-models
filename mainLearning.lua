@@ -253,6 +253,7 @@ end
 
 -- Criterons take tables as input, so must convert tensors <-> tables 
 local toTable = function(tensorIn)
+   -- TODO: Check memory usage of SplitTable compared to table of :view()s
    local tableOut = nn.SplitTable(1, 3):forward(tensorIn)
    return tableOut
 end
@@ -477,7 +478,7 @@ function unsupervisedTrain(model, trainData, options)
       -- Potential batch space memory trimming
       if (bSize ~= options.batchSize) then
 	 -- Grab the opportunity to make some space
-	 inputs = nil; targets = nil; collectgarbage();
+	 inputs = nil; targets = nil; collectgarbage("count");
 	 
 	 -- Pre-allocate mini batch space
 	 inputs = allocate_batch(trainData, bSize)

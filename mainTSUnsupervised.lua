@@ -305,6 +305,8 @@ for k, v in ipairs(modelsList) do
 		  print("Reconstruction error (valid) : " .. validErr);
 		  -- The validation error has risen since last checkpoint
 		  if validErr > prevValid then
+		     -- TODO : finish this
+		     validIncreasedTimes = validIncreasedTimes + 1
 		     -- Reload the last saved model
 		     model = torch.load(saveLocation);
 		     -- Stop the learning
