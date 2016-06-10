@@ -86,23 +86,24 @@ local options = ts_init.get_options(cmd_params.useCuda)
 
 ts_init.set_globals(); ts_init.set_cuda(options)
 
--- Size of features at each timestep in the training sequences
--- options.featSize = 12;
-
-options.batchSize = 32;
+options.batchSize = 16;
 
 -- Train to predict next steps
 options.predict = true
 
--- All sequences will be sliced in to sub-sequences f this duration
+-- All sequences will be sliced into sub-sequences of this duration
 options.sliceSize = 128
 
 -- Not all the dataset is loaded into memory in a single pass,
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
-options.datasetWindowSize = 128;
-options.datasetWindowMaxEpochs = 100;
-options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 5) 
+options.datasetWindowSize = 256
+options.datasetMaxEpochs = 100
+options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2) 
+
+-- Maximum number of successive times the validation error can increase
+-- before 
+options.maxValidIncreasedEpochs = 5
 
 ----------------------------------------------------------------------
 -- Initialize datasets
@@ -177,7 +178,7 @@ for k, v in ipairs(modelsList) do
    
    -- Define the model
    model = curModel:defineModel(structure, options);
-    -- Define the classification criterion
+   -- Define the classification criterion
    model, criterion = curModel:defineCriterion(model);
    
    -- Flatten all trainable parameters into a 1-dim vector
@@ -228,48 +229,46 @@ for k, v in ipairs(modelsList) do
       -- 	 end
       -- end
       
-      local f_load = msds.load.get_btchromas
-      -- Perform sliding window over the whole dataset (too large to fit in memory)
-      -- Returns batches of training, validation... data as filenames
-      -- 
-      -- TODO:
-      --  * Must properly close all opened files,
-      --  * Can improve by avoiding to reload previously loaded files,
-      --   really perform a sliding window
-      --   (:narrow() the dataset et :cat() the new data)
-      for slices in import_dataset.get_sliding_window_iterator(
-	 unSets, f_load, options) do
-	 -- print('Start loop on dataset windows')
-	    
-	 local unsupValid = slices['VALID']
-	    
-	 local datasetWindowEpoch
-	 -- Perform SGD on this subset of the dataset
-	 for datasetWindowEpoch = 1, options.datasetWindowMaxEpochs do	 
-	    prevValid = math.huge
-	    
-	    -- Create minibatch
-	    local unsupData = {}
-	    -- Gets random indexes for both inputs and targets
-	    local indexes = torch.randperm(slices['TRAIN']['data']:size(1)):
-	       sub(1, options.batchSize):long()
-	    
-	    for dataType, dataSubset in pairs(slices['TRAIN']) do
-	       -- Iterate over inputs and targets
-	       unsupData[dataType] = dataSubset:index(1, indexes)
-	    end
-	       
-	    if (not options.adaptiveLearning) then
-	       if torch.type(unsupData.data) ~= 'table' then
-		  configureOptimizer(options, unsupData.data:size(2))
-	       else
-		  configureOptimizer(options, #unsupData.data);
-	       end
-	    end
+      local datasetEpoch
+      -- Perform SGD on this subset of the dataset
+      for datasetEpoch = 1, options.datasetMaxEpochs do
+	 local minValidErr = math.huge
+	 
+	 local f_load = msds.load.get_btchromas
+	 -- Perform sliding window over the whole dataset (too large to fit in memory)
+	 -- Returns batches of training, validation... data as filenames
+	 for slices in import_dataset.get_sliding_window_iterator(
+	    unSets, f_load, options) do
+	    -- print('Start loop on dataset windows')	 
+	    local prevValid = math.huge
+	    local validIncreasedEpochs = 0
 
-	    epoch = 0;
-	    while epoch < options.maxEpochs do
+	    print(minValidErr)
+	    
+	    local unsupValid = slices['VALID']
+
+	    for epoch=0, options.maxEpochs do
 	       print("Epoch #" .. epoch);
+
+	       -- Create minibatch
+	       local unsupData = {}
+	       -- Gets random indexes for both inputs and targets
+	       local indexes = torch.randperm(slices['TRAIN']['data']:size(1)):
+		  sub(1, options.batchSize):long()
+	       
+	       for dataType, dataSubset in pairs(slices['TRAIN']) do
+		  -- Iterate over inputs and targets
+		  unsupData[dataType] = dataSubset:index(1, indexes)
+	       end
+	       
+	       if (not options.adaptiveLearning) then
+		  if torch.type(unsupData.data) ~= 'table' then
+		     configureOptimizer(options, unsupData.data:size(2))
+		  else
+		     configureOptimizer(options, #unsupData.data);
+		  end
+	       end
+
 	       --[[ Adaptive learning ]]--
 	       if options.adaptiveLearning then
 		  -- 1st epochs = Start with purely stochastic (SGD) on single examples
@@ -305,26 +304,37 @@ for k, v in ipairs(modelsList) do
 		  print("Reconstruction error (valid) : " .. validErr);
 		  -- The validation error has risen since last checkpoint
 		  if validErr > prevValid then
-		     -- TODO : finish this
-		     validIncreasedTimes = validIncreasedTimes + 1
-		     -- Reload the last saved model
-		     model = torch.load(saveLocation);
-		     -- Stop the learning
-		     print(" => Stop learning");
-		     break;
+		     validIncreasedEpochs = validIncreasedEpochs + 1
+		     print('Validation increased, now ' .. validIncreasedEpochs ..
+			      ' times in a row')
+		     if validIncreasedEpochs > options.maxValidIncreasedEpochs then
+			-- Reload the last saved model
+			model = torch.load(saveLocation);
+			-- Stop the learning
+			print(" => Stop learning");
+			break;
+		     end
+		  else
+		     validIncreasedEpochs = 0
 		  end
-		  -- Otherwise save the current model
-		  torch.save(saveLocation, model);
+		  print(validErr)
+		  print(minValidErr)
+		  if validErr <= minValidErr then
+		     -- Save the current best model
+		     -- TODO: check this! Since validation window is sliding,
+		     -- this can break
+		     torch.save(saveLocation, model);
+		  end
 		  -- Keep the current error
 		  prevValid = validErr;
+		  minValidErr = math.min(validErr, minValidErr)
 	       end
-	       epoch = epoch + 1;
 	       -- Collect the garbage
 	       collectgarbage();
 	    end
 	 end
       end
-	 
+      
       -- Keep trained layer in table
       trainedLayers[l] = model;
       -- Retrieve the encoding layer only
