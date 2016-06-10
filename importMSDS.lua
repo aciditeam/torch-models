@@ -7,9 +7,7 @@ M.load = {}
 M.load = require './datasets/msds/beatAlignedFeats'
 
 -- List disfunctional files and ignore them
-local blacklist = {
-   'TRAAYNQ128EF35922B.h5'
-}
+local blacklist = {}
 
 M.__blacklist = blacklist
 
@@ -32,7 +30,7 @@ local hdf5 = require 'hdf5'
 function M.load.get_btchromas(h5)
    if type(h5) ~= 'string' then h5 = hdf5.HDF5File.filename(h5) end
       
-   if exists(h5, blacklist, is_suffix) and use_blacklist then
+   if use_blacklist and exists(h5, blacklist, is_suffix) then
       print("WARNING: This hdf5 file has been blacklisted as incompatible" ..
 	       ", skipping it")
       return torch.zeros(1, 12)

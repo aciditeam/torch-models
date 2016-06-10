@@ -251,18 +251,18 @@ local function makeRecurrentTensor(tensorIn)
    return tensorOut
 end
 
--- Criterons take tables as input, so must convert tensors <-> tables 
-local toTable = function(tensorIn)
-   -- TODO: Check memory usage of SplitTable compared to table of :view()s
-   local tableOut = nn.SplitTable(1, 3):forward(tensorIn)
-   return tableOut
-end
+-- -- Criterons take tables as input, so must convert tensors <-> tables 
+-- local toTable = function(tensorIn)
+--    -- TODO: Check memory usage of SplitTable compared to table of :view()s
+--    local tableOut = nn.SplitTable(1, 3):forward(tensorIn)
+--    return tableOut
+-- end
 
-local toTensor = function(tableIn)
-   local seqLen, sizes = #tableIn, tableIn[1]:size()
-   return nn.JoinTable(1):forward(tableIn):
-      view(seqLen, sizes[1], sizes[2])
-end
+-- local toTensor = function(tableIn)
+--    local seqLen, sizes = #tableIn, tableIn[1]:size()
+--    return nn.JoinTable(1):forward(tableIn):
+--       view(seqLen, sizes[1], sizes[2])
+-- end
 
 ----------------------------------------------------------------------
 -- Main supervised learning function
@@ -371,8 +371,7 @@ function supervisedTrain(model, trainData, options)
 	 -- estimate classification (compare to target)
 	 -- print(output:size())
 	 -- print(targets:size())
-	 local err = criterion:forward(toTable(output),
-				       toTable(targets_in))
+	 local err = criterion:forward(output, targets_in)
 	 -- TODO
 	 -- Add the sparsity here !
 	 -- TODO
@@ -380,9 +379,8 @@ function supervisedTrain(model, trainData, options)
 	 -- compute overall error
 	 f = f + err
 	 -- estimate df/dW (perform back-prop)
-	 local df_do = criterion:backward(toTable(output),
-					  toTable(targets_in))
-	 model:backward(inputs_in, toTensor(df_do))
+	 local df_do = criterion:backward(output, targets_in)
+	 model:backward(inputs_in, df_do)
 	 -- in case of combined criterion
 	 if (torch.type(output) == 'table') then output = output[1] end
 	 
@@ -442,9 +440,9 @@ function supervisedTrain(model, trainData, options)
    return (1 - confusion.totalValid)
 end
 
-function unsupervisedTrain(model, trainData, options)
+function unsupervisedTrain(model, trainData, epoch, options)
    -- epoch tracker
-   epoch = epoch or 1
+   local epoch = epoch or 1
    -- time variable
    local time = sys.clock()
    
@@ -520,8 +518,8 @@ function unsupervisedTrain(model, trainData, options)
       
       -- TODO TODO TODO --
       -- CHANGE THIS, ONLY TEMPORARY
-      local inputs_recTensor = makeRecurrentTensor(inputs)
-      local targets_recTensor = makeRecurrentTensor(targets)
+      local inputs_recTensor = inputs -- makeRecurrentTensor(inputs)
+      local targets_recTensor = targets -- makeRecurrentTensor(targets)
       
       if options.cuda then inputs_recTensor = inputs_recTensor:cuda() end
       -- create closure to evaluate f(X) and df/dX
@@ -541,8 +539,8 @@ function unsupervisedTrain(model, trainData, options)
 	 -- estimate classification (compare to target)
 	 -- print(output:size())
 	 -- print(targets:size())
-	 local err = criterion:forward(toTable(output),
-				       toTable(targets_recTensor))
+	 local err = criterion:forward(output,
+				       targets_recTensor)
 	 -- TODO
 	 -- Add the sparsity here !
 	 -- TODO
@@ -550,10 +548,10 @@ function unsupervisedTrain(model, trainData, options)
 	 -- compute overall error
 	 f = f + err
 	 -- estimate df/dW (perform back-prop)
-	 local gradOutputs = criterion:backward(toTable(output),
-						toTable(targets_recTensor))
+	 local gradOutputs = criterion:backward(output,
+						targets_recTensor)
 	 local gradInputs = model:backward(inputs_recTensor,
-					   toTensor(gradOutputs))
+					   gradOutputs)
 	 
 	 -- Adjust weights
 	 model:updateParameters(options.learningRate)
@@ -605,8 +603,6 @@ function unsupervisedTrain(model, trainData, options)
    --os.execute('mkdir -p ' .. sys.dirname(filename))
    --print('==> saving model to '..filename)
    --torch.save(filename, model)
-   -- next epoch
-   epoch = epoch + 1
    return err
 end
 
@@ -765,7 +761,7 @@ function unsupervisedTest(model, testData, options)
 	 inputs[k] = testData.data[i];
 	 k = k + 1;
       end
-
+      
       -- Initialize targets
       if options.predict then
 	 -- Train model to predict subsequent input steps
@@ -791,8 +787,7 @@ function unsupervisedTest(model, testData, options)
       -- in case of combined criterion
       if (torch.type(pred) == 'table') then pred = pred[1]; end
 
-      err = criterion:forward(toTable(pred),
-			      toTable(targets_recTensor))
+      err = criterion:forward(pred, targets_recTensor)
    end
    -- timing
    time = sys.clock() - time
@@ -1194,5 +1189,4 @@ function supervisedTrainHF(model, testData, params)
 	 model:normalize()
       end
    end
-   epoch = epoch + 1;
 end

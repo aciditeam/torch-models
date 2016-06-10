@@ -293,7 +293,8 @@ for k, v in ipairs(modelsList) do
 	       
 	       --[[ Unsupervised pre-training ]]--
 	       -- Perform unsupervised training of the model
-	       err = curModel:unsupervisedTrain(model, unsupData, options);
+	       -- err = curModel:
+	       err = unsupervisedTrain(model, unsupData, epoch, options);
 	       print("Reconstruction error (train) : " .. err);
 	       
 	       --[[ Validation set checking ]]--
@@ -317,8 +318,6 @@ for k, v in ipairs(modelsList) do
 		  else
 		     validIncreasedEpochs = 0
 		  end
-		  print(validErr)
-		  print(minValidErr)
 		  if validErr <= minValidErr then
 		     -- Save the current best model
 		     -- TODO: check this! Since validation window is sliding,
