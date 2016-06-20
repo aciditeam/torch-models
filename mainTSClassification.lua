@@ -70,7 +70,7 @@ options.visualize = true;
 -- Switching to float (economic)
 torch.setdefaulttensortype('torch.FloatTensor')
 -- Eventual CUDA support
-options.cuda = true;
+options.cuda = false;
 if options.cuda then
   print('==> switching to CUDA')
   local ok, cunn = pcall(require, 'fbcunn')
@@ -88,7 +88,8 @@ torch.setnumthreads(4);
 ----------------------------------------------------------------------
 
 -- Change this directory to point on all UCR datasets
-baseDir = '/home/aciditeam/datasets/TS_Datasets';
+--baseDir = '/home/aciditeam/datasets/TS_Datasets';
+baseDir = '/Users/esling/Dropbox/TS_Datasets';
 
 setList = {'50words','Adiac','ArrowHead','ARSim','Beef',
   'BeetleFly','BirdChicken','Car','CBF','Chlorine','CinECG',
@@ -189,7 +190,7 @@ end
 -- TODO
 
 -- modelsList = {modelMLP, modelCNN, modelInception, modelVGG};
-modelsList = {modelMLP};
+modelsList = {modelVAE};
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(modelsList) do
@@ -279,7 +280,7 @@ for k, v in ipairs(modelsList) do
             break; 
           end
           -- Otherwise save the current model
-          torch.save('results/model-pretrain-layer' .. l .. '.net', model);
+          --torch.save('results/model-pretrain-layer' .. l .. '.net', model);
           -- Keep the current error
           prevValid = validError;
         end
@@ -296,6 +297,7 @@ for k, v in ipairs(modelsList) do
       -- Retrieve the encoding layer only
       model = curModel:retrieveEncodingLayer(model)
       -- Put model in evaluation mode
+      print(model);
       model:evaluate();
       -- Prepare a set of activations
       forwardedData = {data = {}};
