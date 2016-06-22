@@ -465,6 +465,8 @@ end
 -- 
 -- Return a new tensor of sequence slices of uniform duration, using a sliding
 -- window of the full dataset.
+-- Also return the index of the last loaded file in the training dataset
+-- (allows tracking training progress).
 -- 
 -- Each iteration yieds training, validation (and optionnaly) testing subsets
 -- from the dataset.
@@ -637,6 +639,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    end
    
    local step_n = 0
+   local file_position = 0
    
    return function()
       collectgarbage(); collectgarbage()
@@ -644,18 +647,22 @@ function M.get_sliding_window_iterator(sets, f_load, options)
       
       -- copy previous positions
       local prev_positions = deepcopy(positions)
+      -- get new files to load
       local windowed_sets = get_windows(step_n)
+
+      file_position = file_position + #windowed_sets['TRAIN']
       
-      -- Slice all examples in the batch to have same duration,
+      -- slice all examples in the batch to have same duration,
       -- allows putting them all in a single tensor for memory efficiency
       local new_slices, new_slicesNumber = M.load_slice_sets_tensor(
 	 windowed_sets, f_load, options)
-      
+
+      -- update internal memory
       update_slices(step_n, new_slices, new_slicesNumber, prev_positions)
-      
+
       step_n = step_n + 1
       
-      return slices
+      return slices, file_position
    end
 end
 
@@ -684,6 +691,8 @@ function M.load_slice_sets_tensor(sets, f_load, options)
    local slicesNumbers = {}
    
    for subsetType, subset_filenames in pairs(sets) do
+      print('Loading ' .. subsetType .. ' dataset')
+      
       slicedData[subsetType] = {}
 
       slicedData_subset, slicedTargets_subset, slicesNumbers_subset = M.load_slice_filenames_tensor(
@@ -693,8 +702,6 @@ function M.load_slice_sets_tensor(sets, f_load, options)
       slicedData[subsetType]['targets'] = slicedTargets_subset
       slicesNumbers[subsetType] = slicesNumbers_subset
    end
-
-   print('Loaded ' .. slicedData['TRAIN']['data']:size(options.batchDim) .. ' new slices')
    
    return slicedData, slicesNumbers
 end
@@ -731,6 +738,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
       local sequenceDuration = sequence:size(1)
       
       if sequenceDuration < sliceSize + predictionLength then
+	 -- Sequence is shorter than the slice size: add silence at the end
 	 local deltaDuration = sliceSize - sequenceDuration
 	 local zeroPaddedSequence = sequence:cat(
 	    torch.zeros(deltaDuration + predictionLength, featSize), 1)
@@ -775,36 +783,5 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
    
    return slicedData, slicedTargets, slicesNumbers
 end
-
--- function import_msds_data(dirData, resampleVal)
---   -- Sets data
---   local sets = {};
---   -- Types of datasets
---   local setsTypes = {"TEST", "TRAIN"};
---   -- Load the datasets (factored)
---   sets['all'] = {};
---   for idT,valType in ipairs(setsTypes) do
---      print("    - Loading " .. value .. " [" .. valType .. "]");
---      -- Get the test and train sets
---      TODO
-
---      -- Parse data-file
---      local finalData = msds.parse(trainName)
-     
---      if (resampleVal) then
---         finalData = tensorResampling(finalData, resampleVal);
---      end
-     
---      -- Make structure
---      sets[value][valType] = curData;
---   end
---   if (collectgarbage("count") > 1000000) then
---      print("Collecting garbage for ".. (collectgarbage("count")) .. "Ko");
---      collectgarbage();
---   end
---   -- Just make sure to remove unwanted memory
---   collectgarbage();
---   return sets;
--- end
 
 return M

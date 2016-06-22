@@ -498,8 +498,6 @@ function unsupervisedTrain(model, trainData, epoch, options)
    -- time variable
    local time = sys.clock()
 
-   print('Hi')
-   
    -- Store error
    local err = 0
    
@@ -510,7 +508,6 @@ function unsupervisedTrain(model, trainData, epoch, options)
    print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
 
    for inputs, targets in minibatchIterator(trainData, options) do
-      print(inputs:size())
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
 	 -- get new parameters

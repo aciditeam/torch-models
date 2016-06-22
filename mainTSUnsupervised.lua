@@ -85,6 +85,10 @@ cmd_params = cmd:parse(arg)
 
 local options = ts_init.get_options(cmd_params.useCuda)
 
+-- Debug and printing parameters
+-- Print current validation every ... analyzed files
+options.printValidationRate = 200
+
 -- RNN-library's batch conventions
 options.tDim = 1
 options.batchDim = 2
@@ -116,7 +120,6 @@ options.slidingWindowStep = 16;
 -- Train to predict next steps
 options.predict = true
 
-
 -- Smaller-sized sliding window over a batch of long examples
 local slidingWindow = nn.SequencerSlidingWindow(1, options.slidingWindowSize,
 						options.slidingWindowStep)
@@ -146,7 +149,14 @@ local function subrange(elems, start_idx, end_idx)
    return sub_elems
 end
 
-options.validSubSize = 100
+options.validSubSize = #filenamesValid_sub
+options.validSubSize = 100  -- Comment to use the full validation set 
+
+if options.validSubSize < #filenamesValid_sub then
+   print('WARNING! Not using full validation set!')
+   print('Using only the first ..' .. options.validSubSize .. ' elements')
+end
+
 local filenamesValid_sub = subrange(filenamesValid, 1, options.validSubSize)
 
 local f_load = msds.load.get_btchromas
@@ -158,6 +168,22 @@ local unsupValid = {data = unsupValid_data,
 		    targets = unsupValid_targets}
 
 print(unsupValid_data:size())
+
+-- Training set
+local filenamesTrain = filenamesSets["TRAIN"];
+
+-- Randomize training examples order
+local function shuffle(elems)
+   local elemsShuffle = {}
+   local indexes = torch.randperm(#elems)
+   for i=1, #elems do
+      table.insert(elemsShuffle, elems[indexes[i]])
+   end
+   return elemsShuffle
+end
+
+filenamesTrain = shuffle(filenamesTrain)
+
 
 ----------------------------------------------------------------------
 -- Iterating over all potential models
@@ -255,199 +281,220 @@ for k, v in ipairs(models) do
       
       -- Set of trained layers
       trainedLayers = {};
-      
-      -- Unsupervised set
-      local filenamesTrain = filenamesSets["TRAIN"];
-      
+            
       -- -- Switch training data to GPU
       -- if options.cuda then
       --    unsupData.data = unsupData.data:cuda();
       --    unsupValid.data = unsupValid.data:cuda();
       -- end
+
+      local mainSaveLocation = savePrefix .. shortModelName ..
+	 shortCriterionName
+
+      -----------------------------------------------------------
+      -- TODO (check): No loop on layers, uses batch-normalize --
+      -----------------------------------------------------------
+      --for l = 1, structure.nLayers do
+      -- print('Start loop on layers')
+      -- To save intermediate results during learning
+      -- local layerSaveLocation = mainSaveLocation ..
+      --    '-pretrain-layer_' .. l .. '.net'
+
+      local saveLocation = layerSaveLocation or mainSaveLocation .. '.net'
       
-      for l = 1, structure.nLayers do
-	 print('Start loop on layers')
-	 -- To save intermediate results during learning
-	 local saveLocation = savePrefix .. shortModelName ..
-	    shortCriterionName ..'-pretrain-layer_' .. l .. '.net'
-	 
-	 -- Define the pre-training model
-	 -- TODO: disabled this for compatibility, re-enable eventually
-	 -- local model = curModel:definePretraining(structure, l, options);
+      -- Define the pre-training model
+      -- TODO: disabled this for compatibility, re-enable eventually
+      -- local model = curModel:definePretraining(structure, l, options);
 
-	 -- Activate CUDA on the model
-	 if options.cuda then model:cuda(); end
-	 -- If classical learning configure the optimizer
-	 -- TODO
-	 -- if (not options.adaptiveLearning) then 
-	 -- 	 if torch.type(unsupData.data) ~= 'table' then
-	 -- 	    configureOptimizer(options, unsupData.data:size(2))
-	 -- 	 else
-	 -- 	    configureOptimizer(options, #unsupData.data);
-	 -- 	 end
-	 -- end
+      -- Activate CUDA on the model
+      if options.cuda then model:cuda(); end
+      -- If classical learning configure the optimizer
+      -- TODO
+      -- if (not options.adaptiveLearning) then 
+      -- 	 if torch.type(unsupData.data) ~= 'table' then
+      -- 	    configureOptimizer(options, unsupData.data:size(2))
+      -- 	 else
+      -- 	    configureOptimizer(options, #unsupData.data);
+      -- 	 end
+      -- end
 
-	 -- Keep track of best validation error
-	 local minValidErr = math.huge
-	 
-	 local datasetEpoch
-	 -- Perform SGD on this subset of the dataset
-	 for datasetEpoch = 1, options.datasetMaxEpochs do
-	    local f_load = msds.load.get_btchromas
-
-	    -- Perform sliding window over the training dataset (too large to fit in memory)
-	    for slices in import_dataset.get_sliding_window_iterator(
-	       {TRAIN = filenamesTrain}, f_load, options) do
-	       print(collectgarbage('count'))
-	       -- print('Start loop on dataset windows')
-	       local validIncreasedEpochs = 0
-
-	       local miniSequences = {}
-	       -- Take a random subset of examples and slice them into
-	       -- small training examples with size options.slidingWindowSize
-	       for dataType, dataSubset in pairs(slices['TRAIN']) do
-		  -- Iterate over inputs and targets
-		  local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
-		  miniSequences[dataType] = smallSlidingWindowBatch
-	       end
-
-	       print('Dataset window of size: ')
-	       print(miniSequences['data']:size())
-
-	       for epoch=0, options.maxEpochs do
-		  print("Epoch #" .. epoch);
-		  print(collectgarbage('count'))
-		  
-		  -- Create minibatch
-		  local unsupData = {}
-		  -- Gets random indexes for both inputs and targets
-		  local indexes = torch.randperm(slices['TRAIN']['data']:size(options.batchDim)):
-		     sub(1, options.batchSize):long()
-
-		  for dataType, dataSubset in pairs(miniSequences) do
-		     unsupData[dataType] = miniSequences[dataType]:index(options.batchDim, indexes)
-		  end
-		  
-		  -- -- Take a random subset of examples and slice them into
-		  -- -- small training examples with size options.slidingWindowSize
-		  -- for dataType, dataSubset in pairs(slices['TRAIN']) do
-		  -- 	  -- Iterate over inputs and targets
-		  -- 	  local shuffledExamplesSubset = dataSubset:index(options.batchDim, indexes)
-		  -- 	  local smallSlidingWindowBatch = batchSlidingWindow(
-		  -- 	     shuffledExamplesSubset)
-		  -- 	  unsupData[dataType] = smallSlidingWindowBatch
-		  -- end
-		  
-		  if (not options.adaptiveLearning) then
-		     if torch.type(unsupData.data) ~= 'table' then
-			configureOptimizer(options, unsupData.data:size(options.batchDim))
-		     else
-			configureOptimizer(options, #unsupData.data);
-		     end
-		  end
-
-		  --[[ Adaptive learning ]]--
-		  if options.adaptiveLearning then
-		     -- 1st epochs = Start with purely stochastic (SGD) on single examples
-		     if epoch == 0 then
-			configureOptimizer({optimization = 'SGD', batchSize = 5,
-					    learningRate = 5e-3},
-			   unsupData.data:size(2));
-		     end
-		     -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
-		     if epoch == options.subLinearEpoch then
-			configureOptimizer({optimization = 'SGD', batchSize = 128,
-					    learningRate = 2e-3},
-			   unsupData.data:size(2))
-		     end
-		     -- Remaining epochs = Advanced learning algorithm user-selected
-		     -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX |
-		     --  FISTALS | NAG | RMSPROP | RPROP | CMAES)
-		     if epoch == options.superLinearEpoch then
-			configureOptimizer(options, unsupData.data:size(options.batchDim))
-		     end
-		  end
-		  
-		  --[[ Unsupervised pre-training ]]--
-		  -- Perform unsupervised training of the model
-		  -- err = curModel:
-		  err = unsupervisedTrain(model, unsupData, epoch, options);
-		  print("Reconstruction error (train) : " .. err);
-		  
-		  --[[ Validation set checking ]]--
-		  if epoch % options.validationRate == 0 then
-		     -- Check reconstruction error on the validation data
-		     validErr = unsupervisedTest(model, unsupValid,
+      local initialValidError = unsupervisedTest(model, unsupValid,
 						 options);
-		     print("Reconstruction error (valid) : " .. validErr);
+      print('Initial validation error: ' .. initialValidError)
+      
+      -- Keep track of best validation error
+      local minValidErr = math.huge
 
-		     if validErr > minValidErr then
-			-- The validation error has risen since last checkpoint
+      local datasetEpoch
+      -- Perform SGD on this subset of the dataset
+      for datasetEpoch = 1, options.datasetMaxEpochs do
+	 local f_load = msds.load.get_btchromas
+	 
+	 local validIncreasedEpochs = 0
 
-			validIncreasedEpochs = validIncreasedEpochs + 1
-			print('Validation error increased, previous best value was ' ..
-				 validIncreasedEpochs .. ' epochs ago')
+	 local previous_file_position = 0  -- Track window progress
+	 -- Perform sliding window over the training dataset (too large to fit in memory)
+	 for slices, file_position in import_dataset.get_sliding_window_iterator(
+	    {TRAIN = filenamesTrain}, f_load, options) do
+	    print(collectgarbage('count'))
+	    -- print('Start loop on dataset windows')
 
-			if validIncreasedEpochs > options.maxValidIncreasedEpochs then
-			   -- Reload the last saved model
-			   model = torch.load(saveLocation);
-			   -- Stop the learning
-			   print(" => Stop learning");
-			   break;
-			end
-		     else
-			-- Keep the current error as reference
-			minValidErr = validErr;
-			-- Save the current best model
-			torch.save(saveLocation, model);
+	    print('Last loaded file, number: ' .. file_position)
+	    if file_position - previous_file_position > options.printValidationRate then
+	       validErr = unsupervisedTest(model, unsupValid,
+					   options);
+	       print('Current validation error before training: ' .. validErr)
+	    end
+	    previous_file_position = file_position
+	    
+	    local miniSequences = {}
+	    -- Take a random subset of examples and slice them into
+	    -- small training examples with size options.slidingWindowSize
+	    for dataType, dataSubset in pairs(slices['TRAIN']) do
+	       -- Iterate over inputs and targets
+	       local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
+	       miniSequences[dataType] = smallSlidingWindowBatch
+	    end
 
-			validIncreasedEpochs = 0
-		     end
-		  end
-		  -- Collect the garbage
-		  collectgarbage();
+	    print('Dataset window of size: ')
+	    print(miniSequences['data']:size())
+
+	    -- for epoch=0, options.maxEpochs do
+	    -- print("Epoch #" .. epoch);
+	    -- print(collectgarbage('count'))
+	    
+	    -- -- Create minibatch
+	    -- local unsupData = {}
+	    -- -- Gets random indexes for both inputs and targets
+	    -- local indexes = torch.randperm(slices['TRAIN']['data']:size(options.batchDim)):
+	    --    sub(1, options.batchSize):long()
+
+	    -- for dataType, dataSubset in pairs(miniSequences) do
+	    --    unsupData[dataType] = miniSequences[dataType]:index(options.batchDim, indexes)
+	    -- end
+
+	    local unsupData = miniSequences
+	    
+	    -- -- Take a random subset of examples and slice them into
+	    -- -- small training examples with size options.slidingWindowSize
+	    -- for dataType, dataSubset in pairs(slices['TRAIN']) do
+	    -- 	  -- Iterate over inputs and targets
+	    -- 	  local shuffledExamplesSubset = dataSubset:index(options.batchDim, indexes)
+	    -- 	  local smallSlidingWindowBatch = batchSlidingWindow(
+	    -- 	     shuffledExamplesSubset)
+	    -- 	  unsupData[dataType] = smallSlidingWindowBatch
+	    -- end
+	    
+	    if (not options.adaptiveLearning) then
+	       if torch.type(unsupData.data) ~= 'table' then
+		  configureOptimizer(options, unsupData.data:size(options.batchDim))
+	       else
+		  configureOptimizer(options, #unsupData.data);
 	       end
 	    end
-	 end
-	 
-	 -- Keep trained layer in table
-	 trainedLayers[l] = model;
-	 -- Retrieve the encoding layer only
-	 model = curModel:retrieveEncodingLayer(model)
-	 -- Put model in evaluation mode
-	 model:evaluate();
-	 -- Prepare a set of activations
-	 forwardedData = {data = {}};
-	 forwardedValid = {data = {}};
-	 
-	 -- Perform forward propagation on data
-	 forwardedData.data = model:forward(unsupData.data);
-	 if torch.type(forwardedData.data) ~= 'table' then
-	    forwardedData.data = forwardedData.data:clone()
-	 else
-	    for i = 1,#forwardedData.data do
-	       forwardedData.data[i] = forwardedData.data[i]:clone()
-	    end
-	 end
-	 
-	 -- Replace previous set
-	 unsupData = forwardedData;
-	 -- Perform forward propagation on validation
-	 forwardedValid.data = model:forward(unsupValid.data);
-	 if torch.type(forwardedValid.data) ~= 'table' then
-	    forwardedValid.data = forwardedValid.data:clone()
-	 else
-	    for i = 1,#forwardedValid.data do
-	       forwardedValid.data[i] = forwardedValid.data[i]:clone()
-	    end
-	 end
 
-	 -- Replace previous set
-	 unsupValid = forwardedValid;
-	 -- Remove garbage
-	 collectgarbage();
+	    --[[ Adaptive learning ]]--
+	    if options.adaptiveLearning then
+	       -- 1st epochs = Start with purely stochastic (SGD) on single examples
+	       if epoch == 0 then
+		  configureOptimizer({optimization = 'SGD', batchSize = 5,
+				      learningRate = 5e-3},
+		     unsupData.data:size(2));
+	       end
+	       -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
+	       if epoch == options.subLinearEpoch then
+		  configureOptimizer({optimization = 'SGD', batchSize = 128,
+				      learningRate = 2e-3},
+		     unsupData.data:size(2))
+	       end
+	       -- Remaining epochs = Advanced learning algorithm user-selected
+	       -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX |
+	       --  FISTALS | NAG | RMSPROP | RPROP | CMAES)
+	       if epoch == options.superLinearEpoch then
+		  configureOptimizer(options, unsupData.data:size(options.batchDim))
+	       end
+	    end
+	    
+	    --[[ Unsupervised pre-training ]]--
+	    -- Perform unsupervised training of the model
+	    -- err = curModel:
+	    err = unsupervisedTrain(model, unsupData, datasetEpoch, options);
+	    print("Reconstruction error (train) : " .. err);
+	    
+	    --[[ Validation set checking ]]--
+	    if datasetEpoch % options.validationRate == 0 then
+	       -- Check reconstruction error on the validation data
+	       validErr = unsupervisedTest(model, unsupValid,
+					   options);
+	       print("Reconstruction error (valid) : " .. validErr);
+
+	       if validErr > minValidErr then
+		  -- The validation error has risen since last checkpoint
+
+		  validIncreasedEpochs = validIncreasedEpochs + 1
+		  print('Validation error increased, previous best value was ' ..
+			   validIncreasedEpochs .. ' epochs ago')
+
+		  if validIncreasedEpochs > options.maxValidIncreasedEpochs then
+		     -- Reload the last saved model
+		     model = torch.load(saveLocation);
+		     -- Stop the learning
+		     print(" => Stop learning");
+		     break;
+		  end
+	       else
+		  -- Keep the current error as reference
+		  minValidErr = validErr;
+		  -- Save the current best model
+		  torch.save(saveLocation, model);
+
+		  validIncreasedEpochs = 0
+	       end
+	    end
+	    -- Collect the garbage
+	    collectgarbage();
+	 end
       end
+      -- end
+      
+      -- Keep trained layer in table
+      trainedLayers[l] = model;
+      -- Retrieve the encoding layer only
+      model = curModel:retrieveEncodingLayer(model)
+      -- Put model in evaluation mode
+      model:evaluate();
+      -- Prepare a set of activations
+      forwardedData = {data = {}};
+      forwardedValid = {data = {}};
+      
+      -- Perform forward propagation on data
+      forwardedData.data = model:forward(unsupData.data);
+      if torch.type(forwardedData.data) ~= 'table' then
+	 forwardedData.data = forwardedData.data:clone()
+      else
+	 for i = 1,#forwardedData.data do
+	    forwardedData.data[i] = forwardedData.data[i]:clone()
+	 end
+      end
+      
+      -- Replace previous set
+      unsupData = forwardedData;
+      -- Perform forward propagation on validation
+      forwardedValid.data = model:forward(unsupValid.data);
+      if torch.type(forwardedValid.data) ~= 'table' then
+	 forwardedValid.data = forwardedValid.data:clone()
+      else
+	 for i = 1,#forwardedValid.data do
+	    forwardedValid.data[i] = forwardedValid.data[i]:clone()
+	 end
+      end
+
+      -- Replace previous set
+      unsupValid = forwardedValid;
+      -- Remove garbage
+      collectgarbage();
    end
 end
+-- end
 
 fd_structures:close()
