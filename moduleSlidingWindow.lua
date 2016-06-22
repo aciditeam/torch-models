@@ -2,13 +2,15 @@
 --
 -- Deep time series learning: Analysis of Torch
 --
--- Auxiliary modules
+-- Main functions for classification
 --
 ----------------------------------------------------------------------
 
 ----------------------------------------------------------------------
 -- Imports
 require 'rnn'
+require 'unsup'
+require 'optim'
 require 'torch'
 require 'modelClass'
 local nninit = require 'nninit'
@@ -36,10 +38,9 @@ function SlidingWindow:updateOutput(input)
    local rep = torch.ceil((input:size(self.tDim) - self.size + 1) / self.step)
    local sz = torch.LongStorage(input:dim()+1)
    local currentOutput= {}
-   if self.tensOut then currentOutput = torch.Tensor(rep, self.size, input:size(2)) end
+   if self.tensOut then currentOutput = torch.Tensor(rep, self.size) end
    for i=1,rep do
-      local slice = input:narrow(self.tDim, ((i - 1) * self.step + 1), self.size)
-      currentOutput[i] = slice
+      currentOutput[i] = input:narrow(self.tDim, ((i - 1) * self.step + 1), self.size)
    end
    self.output = currentOutput
    return self.output

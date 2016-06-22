@@ -20,6 +20,8 @@ local ucr = require './importUCR'
 local msds = require './importMSDS'
 local nninit = require 'nninit'
 
+local moses = require 'moses'
+
 local M = {}
 
 ----------------------------------------------------------------------
@@ -402,7 +404,7 @@ function M.import_ucr_data(dirData, setFiles, resampleVal)
   return sets;
 end
 
--- Extract a subrange from table t 
+-- Extract a subrange from a table 
 local function subrange(t, first, last)
    local sub = {}
    for i=first,last do
@@ -411,13 +413,10 @@ local function subrange(t, first, last)
    return sub
 end
 
--- Standard map over a table of elements
-local function map(f, elems)
-   local f_elems = {}
-   for _, elem in ipairs(elems) do
-      table.insert(f_elems, f(elem))
-   end
-   return f_elems
+-- Sum all elements in a table
+local sum = function(elems)
+   local plus = function(x, y) return x + y end
+   return moses.reduce(elems, plus)
 end
 
 -- Deep table copy
@@ -434,17 +433,6 @@ function deepcopy(orig)
       copy = orig
    end
    return copy
-end
-
--- Structure minibatch of sequences into tensor for recurrent network
---
--- Input dimensions: batchSize x seqLen x featSize
--- Output dimensions: seqLen x batchSize x featSize
-local function makeRecurrentTensor(tensorIn)
-   local inputs_sizes = tensorIn:size()
-   local tensorOut = tensorIn:view(inputs_sizes[2], inputs_sizes[1],
-				  inputs_sizes[3])
-   return tensorOut
 end
 
 -- Return filenames for training, validation and testing sets in chosen dataset
@@ -491,12 +479,12 @@ end
 --  * f_load, a function : filename -> torch.Tensor: load a file
 function M.get_sliding_window_iterator(sets, f_load, options)
    local main_window_size = options.datasetWindowSize
-   local sliding_step = options.datasetWindowStepSize
+   local sliding_step = options.datasetWindowStepSize or
+      math.floor(main_window_size / 10)
 
    local slice_size = options.sliceSize
 
    local train_examples_num = #sets['TRAIN']
-   local sliding_step = sliding_step or math.floor(main_window_size / 10)
    
    -- Avoid skipping some examples because of a step too long
    if sliding_step > main_window_size then
@@ -513,15 +501,6 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    local steps_num, remainder_step = euclidean_division(
       train_examples_num - main_window_size, sliding_step)
    
-   print(steps_num)
-   print(remainder_step)
-   
-   -- local leftover_examples_n = train_examples_num % main_window_size
-   
-   -- Will split the dataset in windows_n windows + the remaining examples
-   -- local windows_num = (train_examples_num - leftover_examples_n) /
-   --    main_window_size
-   
    -- Shuffle the datasets
    local shuffled_sets = {}
    for subsetType, subset in pairs(sets) do
@@ -531,9 +510,11 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    
    -- Compute size of windows for auxiliary subsets (validation, testing...)
    -- Sizes are chosen to be of the same ratio as for the training set.
+   -- 
+   -- EDIT: Do not use this, instead use a FIXED validation set!!
    local function get_win_step_sizes(elems, subsetType, sizes)
       local elems_num = #elems
-      local min_win_size = math.min(elems_num, 64)
+      local min_win_size = math.min(elems_num, 1)
       local win_size = math.max(
 	 math.floor(elems_num * (main_window_size/train_examples_num)),
 	 min_win_size)
@@ -610,33 +591,15 @@ function M.get_sliding_window_iterator(sets, f_load, options)
       elseif step_n < steps_num then
 	 for subsetType, slicesSubset in pairs(new_slices) do
 	    slicesNumber[subsetType] = slicesNumber[subsetType]:cat(
-	       new_slicesNumber[subsetType], 1)
+	       new_slicesNumber[subsetType])
 	    
 	    -- Trim and extend slices container
 	    -- Get informations for trimming
 	    prev_win_start = prev_positions[subsetType]
 	    step_size = sizes[subsetType]['stepSize']
-	    print(prev_win_start)
-	    print(prev_win_start+step_size-1)
 	    slicesNumbers_erase = subrange(slicesNumber[subsetType],
 					   prev_win_start,
 					   prev_win_start+step_size-1 - 1)
-
-	    -- Standard fold-left function
-	    local foldLeft = function(f, init, elems)
-	       local acc = init
-	       for _, elem in pairs(elems) do
-		  acc = f(acc, elem)
-	       end
-	       return acc 
-	    end
-
-	    -- Sum all elements in a table
-	    local sum = function(elems)
-	       local plus = function(x, y) return x + y end
-	       
-	       return foldLeft(plus, 0, elems)
-	    end
 
 	    local erase_slices_num_total = sum(slicesNumbers_erase)
 	    
@@ -655,8 +618,8 @@ function M.get_sliding_window_iterator(sets, f_load, options)
 			 "Number of slices to delete shouldn't be higher than " ..
 			    "current number of slices")
 		  slices[subsetType][dataType] = slices[subsetType][dataType]:
-		     narrow(2, 1+erase_slices_num_total,
-			    slices[subsetType][dataType]:size(2)-
+		     narrow(options.batchDim, 1+erase_slices_num_total,
+			    slices[subsetType][dataType]:size(options.batchDim)-
 			       erase_slices_num_total)
 	       end
 	       collectgarbage()
@@ -664,7 +627,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
 	       -- Add new slices
 	       if slices[subsetType][dataType] then
 		  slices[subsetType][dataType] = slices[subsetType][dataType]:cat(
-		     new_slices[subsetType][dataType], 2)
+		     new_slices[subsetType][dataType], options.batchDim)
 	       else  -- all slices were erased, initialize new slices 
 		  slices[subsetType][dataType] = new_slices[subsetType][dataType]
 	       end
@@ -676,6 +639,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    local step_n = 0
    
    return function()
+      collectgarbage(); collectgarbage()
       if step_n == steps_num then return nil end
       
       -- copy previous positions
@@ -684,7 +648,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
       
       -- Slice all examples in the batch to have same duration,
       -- allows putting them all in a single tensor for memory efficiency
-      local new_slices, new_slicesNumber = M.load_sets_tensor(
+      local new_slices, new_slicesNumber = M.load_slice_sets_tensor(
 	 windowed_sets, f_load, options)
       
       update_slices(step_n, new_slices, new_slicesNumber, prev_positions)
@@ -695,11 +659,15 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    end
 end
 
--- Take a set of sequences as filenames and return a tensor of equal-size slices
+-- Load various subsets of filenames into tensors
 -- 
 -- Also return slicesNumber, a table containing for each subset the number
 -- of slices yielded by the files in it, in order, thus allowing to properly
 -- trim slices tensors afterwards.
+--
+-- TODO: the way targets are stored is suboptimal, replicating most of the
+-- contents of the data. Could optimize by only returning the actual new steps
+-- to predict. 
 -- 
 -- Input:
 --  * sets, a table of string tables: the training, validation... sets,
@@ -711,77 +679,101 @@ end
 --    * options.predictionLength, an integer: the duration over which to do
 --     the forward prediction (default 1 step, predict the next item in the
 --     sequence)
-function M.load_sets_tensor(sets, f_load, options)
-   local sliceSize = options.sliceSize or 128
-   local predictionLength = options.predictionLength or 1
-
-   -- Slice input sequence into equal sized windows
-   --
-   -- Return: a tensor of slices with dimension sliceSize x slicesNumber x featSize
-   local slicer = nn.SlidingWindow(1, sliceSize, sliceSize, 1e9, true)
-   local function slicance(sequence)
-      local slices = slicer:forward(sequence)
-      return makeRecurrentTensor(slices)
-   end
-      
+function M.load_slice_sets_tensor(sets, f_load, options)
    local slicedData = {}
    local slicesNumbers = {}
    
+   for subsetType, subset_filenames in pairs(sets) do
+      slicedData[subsetType] = {}
+
+      slicedData_subset, slicedTargets_subset, slicesNumbers_subset = M.load_slice_filenames_tensor(
+	 subset_filenames, f_load, options)
+      
+      slicedData[subsetType]['data'] = slicedData_subset 
+      slicedData[subsetType]['targets'] = slicedTargets_subset
+      slicesNumbers[subsetType] = slicesNumbers_subset
+   end
+
+   print('Loaded ' .. slicedData['TRAIN']['data']:size(options.batchDim) .. ' new slices')
+   
+   return slicedData, slicesNumbers
+end
+
+-- Take a set of sequences as filenames and return a tensor of equal-size slices
+-- (Specialized function for M.load_slice_sets_tensor()) 
+function M.load_slice_filenames_tensor(filenames, f_load, options)
+   if not(filenames) or filenames == {} then return {} end
+   
+   local sliceSize = options.sliceSize or 128
+   local predictionLength = options.predictionLength or 1
+   
+   -- Initialize containers
+   local example = f_load(filenames[1])  -- get an example in the batch
+   local featSize = example:size(2)  -- dimension of the time-series
+   local slicedData = torch.zeros(sliceSize, 1, featSize)
+   local slicedTargets = torch.zeros(sliceSize, 1, featSize)
+   local slicesNumbers = torch.zeros(#filenames)
+   
+   -- Slice input sequence into equal sized windows
+   -- 
+   -- Return: a tensor of slices with dimension sliceSize x slicesNumber x featSize
+   local slicer = nn.SequencerSlidingWindow(1, sliceSize, sliceSize)
+   local function sliceSequence(sequence)
+      local sequenceDuration = sequence:size(1)
+      
+      sequence = sequence:view(sequenceDuration, 1, featSize)
+      local slices = slicer:forward(sequence)
+      return slices
+   end
+   
    -- Adjust duration of sequences to properly extract slices
    local function zeroPad(sequence)
-      local duration = sequence:size(1)
-      if duration < sliceSize + predictionLength then
-	 local deltaDuration = sliceSize - duration
+      local sequenceDuration = sequence:size(1)
+      
+      if sequenceDuration < sliceSize + predictionLength then
+	 local deltaDuration = sliceSize - sequenceDuration
 	 local zeroPaddedSequence = sequence:cat(
-	    torch.zeros(deltaDuration + predictionLength, sequence:size(2)), 1)
+	    torch.zeros(deltaDuration + predictionLength, featSize), 1)
 	 return zeroPaddedSequence
       else
 	 return sequence
       end
    end
    
-   for subsetType, subset in pairs(sets) do
-      local sequences = map(f_load, subset)
-      slicedData[subsetType] = {}
-      slicedData[subsetType]['data'] = torch.zeros(sliceSize, 1,
-						   sequences[1]:size(2))
-      slicedData[subsetType]['targets'] = torch.zeros(sliceSize, 1,
-						      sequences[1]:size(2))
-
-      slicesNumbers[subsetType] = torch.zeros(#sequences)
+   -- for subsetType, subset in pairs(sets) do
+   for sequence_i, filename in ipairs(filenames) do
+      -- print('Files: ' .. sequence_i .. ', memory usage: ' .. collectgarbage('count'))
       
-      for sequence_i, sequence in ipairs(sequences) do
-	 local sequence = zeroPad(sequence)
-	 local slices = slicance(sequence)
-	 slicesNumbers[subsetType][sequence_i] = slices:size(2)
-
-	 -- TODO: can maybe improve this, could replace added zeros (necessary
-	 -- to ensure same number of slices for original sequence and targets)
-	 -- by values from the actual original sequence
-	 local offsetSequence = sequence:narrow(1, 1+predictionLength,
-						sequence:size(1)-predictionLength):
-	    cat(torch.zeros(predictionLength, sequence:size(2)), 1)
-	 local targetSlices = slicance(offsetSequence)
-	 
-	 slicedData[subsetType]['data'] = slicedData[subsetType]['data']:cat(
-	    slices, 2)
-	 slicedData[subsetType]['targets'] = slicedData[subsetType]['targets']:cat(
-	    targetSlices, 2)
-      end
-
-      -- Remove initial zeros slice
-      for _, dataType in pairs({'data', 'targets'}) do
-	 local slicesNumber = slicedData[subsetType][dataType]:size(2)
-	 slicedData[subsetType][dataType] = slicedData[subsetType][dataType]:
-	    narrow(2, 2, slicesNumber-1)
-      end
+      -- Load the sequences step by step to avoid crashing Lua's memory with a table
+      local sequence = f_load(filename)
+      local sequence = zeroPad(sequence)
+      local sequenceDuration = sequence:size(1)
+      
+      local slices = sliceSequence(sequence)
+      slicesNumbers[sequence_i] = slices:size(options.batchDim)
+      
+      -- TODO: can maybe improve this, could replace added zeros (necessary
+      -- to ensure same number of slices for original sequence and targets)
+      -- by values from the actual original sequence
+      local offsetSequence = sequence:narrow(1, 1+predictionLength,
+					     sequenceDuration-predictionLength):
+	 cat(torch.zeros(predictionLength, featSize), 1)
+      local targetSlices = sliceSequence(offsetSequence)
+      
+      slicedData = slicedData:cat(slices, options.batchDim)
+      slicedTargets = slicedTargets:cat(targetSlices, options.batchDim)
    end
-
-   collectgarbage(); collectgarbage()
-
-   print(slicedData['TRAIN']['data']:size())
    
-   return slicedData, slicesNumbers
+   -- Remove initial zeros slice
+   local slicesNumber = slicedData:size(options.batchDim)
+   slicedData = slicedData:narrow(options.batchDim, 2, slicesNumber-1)
+   slicedTargets = slicedTargets:narrow(options.batchDim, 2, slicesNumber-1)
+   
+   collectgarbage(); collectgarbage()
+   
+   print('Loaded ' .. slicedData:size(options.batchDim) .. ' new slices')
+   
+   return slicedData, slicedTargets, slicesNumbers
 end
 
 -- function import_msds_data(dirData, resampleVal)

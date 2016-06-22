@@ -4,8 +4,6 @@ require 'rnn'
 require 'importTSDataset'
 require 'mainVisualize'
 
-
-
 print("yop");
 
 local nninit = require 'nninit'

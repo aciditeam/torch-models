@@ -14,53 +14,9 @@ require 'optim'
 require 'torch'
 -- require 'moduleSlidingWindow'
 require 'modelClass'
+
+require 'modulePrinter' -- For debug
 local nninit = require 'nninit'
-
-----------------------------------------------------------------------
--- Sliding window module
---
--- This module takes a 1-dimensional time series as input and outputs all its sub-sequences of given size every given step
--- The optional tensOut (default false) decides if the output is either one large Tensor or a table of Tensors
--- The number of subsequences can be limited with parameter nf
-----------------------------------------------------------------------
-
--- local SlidingWindow, parent = torch.class('nn.SlidingWindow','nn.Module')
-
--- function SlidingWindow:__init(tDim, size, step, nf, tensOut)
---    parent.__init(self)
---    self.tDim = tDim or 1
---    self.size = size or 16
---    self.step = step or 1
---    self.nfeatures = nf or 1e9
---    self.tensOut = tensOut or false
--- end
-
--- function SlidingWindow:updateOutput(input)
---    local rep = torch.ceil((input:size(self.tDim) - self.size + 1) / self.step)
---    local sz = torch.LongStorage(input:dim()+1)
---    local currentOutput= {}
---    if self.tensOut then currentOutput = torch.Tensor(rep, self.size) end
---    for i=1,rep do
---       currentOutput[i] = input:narrow(self.tDim, ((i - 1) * self.step + 1), self.size)
---    end
---    self.output = currentOutput
---    return self.output
--- end
-
--- function SlidingWindow:updateGradInput(input, gradOutput)
---    local slices = input:size(self.tDim)
---    self.gradInput:resizeAs(input):zero()
---    for i=1,#gradOutput do 
---       local currentGradInput = gradOutput[i]
---       local curIdx = ((i - 1) * self.step + 1)
---       if (self.tDim == 1) then        
---         self.gradInput[{{curIdx, curIdx + self.size - 1}}]:add(currentGradInput)
---       else 
---         self.gradInput[{{}, {curIdx, curIdx + self.size - 1}}]:add(currentGradInput)
---       end
---    end
---    return self.gradInput
--- end
 
 ----------------------------------------------------------------------
 -- Handmade LSTM
@@ -140,7 +96,8 @@ function modelLSTM:defineModel(structure, options)
       -- Long Short-Term Memories
       if i == 1 then
 	 if (self.sequencer) then
-	    curLSTM = nn.FastLSTM(self.windowSize, structure.layers[i], self.rho)
+	    -- curLSTM = nn.FastLSTM(self.windowSize, structure.layers[i], self.rho)
+	    curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
 	 else
 	    curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
 	 end
@@ -181,15 +138,24 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs))
       lstmModel = nn.Sequencer(model)
       model = nn.Sequential()
-      -- Number of windows we will consider
-      local nWins = torch.ceil(
-	 (structure.nInputs - self.windowSize + 1) / self.windowStep)
-      -- Here we add the subsequencing trick
-      model:add(nn.SlidingWindow(2, self.windowSize, self.windowStep))
-      
+
+      -- Moved out of the LSTM module
+      -- -- Number of windows we will consider
+      -- local nWins = torch.ceil(
+      -- 	 (structure.nInputs - self.windowSize + 1) / self.windowStep)
+      -- model:add(nn.Printer('Sliding window', 'size'))
+      -- -- Here we add the subsequencing trick
+      -- model:add(nn.SequencerSlidingWindow(1, self.windowSize, self.windowStep))
+
+      -- model:add(nn.Printer('Start LSTM', 'size'))
       model:add(lstmModel)
-      model:add(nn.JoinTable(2))
-      model:add(nn.Linear(nWins * structure.nOutputs, structure.nOutputs))
+      -- model:add(nn.Printer('Output JoinTable', 'size'))
+      -- model:add(nn.JoinTable(2))
+      -- model:add(nn.Printer('Output Linear reshape', 'size'))
+      -- model:add(nn.Linear(nWins * structure.nOutputs,
+      -- 			  structure.nOutputs))
+      -- model:add(nn.Printer('Should be the last module'))
+      model = model
    else
       -- Recursor case
       lstmLayers = nn.Recursor(model)
@@ -203,7 +169,7 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs))
    end
    
-   return nn.Sequencer(model)
+   return model
 end
 
 function modelLSTM:definePretraining(structure, l, options)

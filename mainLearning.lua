@@ -210,62 +210,98 @@ end
 
 ----------------------------------------------------------------------
 -- Helper functions
--------------------
+----------------------------------------------------------------------
 
 -- Pre-allocate some memory for a mini batch
-local function allocate_batch(trainData, batchSize)
-   local inputs = {};
-   if (trainData.data[1]:nDimension() == 1) then
-      inputs = torch.Tensor(batchSize, trainData.data[1]:size(1))
-   else
-      inputs = torch.Tensor(batchSize, trainData.data[1]:size(1),
-			    trainData.data[1]:size(2))
-   end
-   return inputs
-end
-
--- -- Pre-allocate some memory for a mini batch
--- local function reallocate_batch(trainData, batchSize, newBatchSize)
---    if batchSize == newBatchSize then
---    else
---       trainData = nil
---       if (trainData.data[1]:nDimension() == 1) then
--- 	 inputs = torch.Tensor(batchSize, trainData.data[1]:size(1))
---       else
--- 	 inputs = torch.Tensor(batchSize, trainData.data[1]:size(1),
--- 			       trainData.data[1]:size(2))
---       end
---    end
+local function allocate_batch(data, batchSize, options)
+   local batch = torch.Tensor(data:size(options.tDim), batchSize,
+			      data:size(options.featsDim))
    
---    return inputs
--- end
-
--- Structure minibatch of sequences into tensor for recurrent network
---
--- Input dimensions: batchSize x seqLen x featSize
--- Output dimensions: seqLen x batchSize x featSize
-local function makeRecurrentTensor(tensorIn)
-   local inputs_sizes = tensorIn:size()
-   local tensorOut = tensorIn:view(inputs_sizes[2], inputs_sizes[1],
-				  inputs_sizes[3])
-   return tensorOut
+   return batch
 end
 
--- -- Criterons take tables as input, so must convert tensors <-> tables 
--- local toTable = function(tensorIn)
---    -- TODO: Check memory usage of SplitTable compared to table of :view()s
---    local tableOut = nn.SplitTable(1, 3):forward(tensorIn)
---    return tableOut
--- end
+-- Iterate through a batch of training examples and targets using mini-batches
+local function minibatchIterator(trainData, options)
+   -- shuffle order at each epoch
+   local shuffle = torch.randperm(trainData.data:size(options.batchDim));
+   
+   -- Pre-allocate mini batch space
+   local inputs = allocate_batch(trainData['data'],
+				 options.batchSize, options)
+   local targets = allocate_batch(trainData['targets'],
+				  options.batchSize, options)
+   
+   local t = 1
+   
+   return function()
+      if t > trainData.data:size(options.batchDim) then
+	 -- All training examples have been used, quit
+	 return nil
+      end
+      -- disp progress
+      -- xlua.progress(t, trainData.data:size(1))
 
--- local toTensor = function(tableIn)
---    local seqLen, sizes = #tableIn, tableIn[1]:size()
---    return nn.JoinTable(1):forward(tableIn):
---       view(seqLen, sizes[1], sizes[2])
--- end
+      -- Check size (for last batch)
+      local bSize = math.min(options.batchSize,
+			     trainData.data:size(options.batchDim) - t + 1);
+
+      -- Potential batch space memory trimming
+      if (bSize ~= options.batchSize) then
+	 -- Grab the opportunity to make some space
+	 inputs = nil; targets = nil; collectgarbage();
+	 
+	 -- Pre-allocate mini batch space
+	 inputs = allocate_batch(trainData['data'], bSize, options)
+	 targets = allocate_batch(trainData['targets'], bSize, options)
+   
+	 -- Switch data to cuda
+	 if options.cuda then
+	    inputs = inputs:cuda();
+	    targets = targets:cuda();
+	 end
+      end
+
+      local k = 1;
+      -- iterate over mini-batch examples
+      for i = t, t+bSize-1 do
+         -- select new sample
+	 selectedInput = trainData.data:select(options.batchDim, shuffle[i])
+	 -- store new sample
+	 inputs:select(options.batchDim, k):copy(selectedInput)
+         k = k + 1
+      end
+      
+      -- Initialize targets
+      if options.predict then
+	 -- Train model to predict subsequent input steps
+	 local k = 1;
+	 for i = t, t+bSize-1 do
+	    -- select new sample
+	    selectedTarget = trainData.targets:select(options.batchDim,
+						      shuffle[i])
+	    -- store new sample
+	    targets:select(options.batchDim, k):copy(selectedTarget)
+	    k = k + 1
+	 end
+      elseif options.inpainting then
+	 -- Perform bidirectional training with inpaiting criterion
+	 -- TODO
+	 error('TODO')
+      else
+	 error('Unhandled case')
+      end
+      
+      if options.cuda then inputs = inputs:cuda(); targets = targets:cuda() end
+
+      t = t+options.batchSize
+      
+      return inputs, targets
+   end
+end
 
 ----------------------------------------------------------------------
 -- Main supervised learning function
+-- TODO: harmonize with other functions (use minibatch iterator)
 -- Rely on a optimization structure with options
 --  . save          ('results')   - subdirectory to save/log experiments in
 --  . visualize     (false)       - visualize input data and weights during training
@@ -290,14 +326,15 @@ function supervisedTrain(model, trainData, options)
    
    -- set model to training mode (for modules that differ in training and testing, like Dropout)
    model:training();
-   -- shuffle order at each epoch
-   shuffle = torch.randperm(trainData.data:size(1));
    
    -- do one epoch
    print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
+
+   -- shuffle order at each epoch
+   shuffle = torch.randperm(trainData.data:size(options.batchDim));
    
    -- Pre-allocate mini batch space
-   local inputs = allocate_batch(trainData, bSize)
+   local inputs = allocate_batch(trainData, bSize, options)
    local targets = torch.zeros(options.batchSize);
 
    -- Switch data to cuda
@@ -305,20 +342,19 @@ function supervisedTrain(model, trainData, options)
       inputs = inputs:cuda();
       targets = targets:cuda();
    end
-   for t = 1,trainData.data:size(1),options.batchSize do
-      print(t)
+   for t = 1,trainData.data:size(options.batchDim),options.batchSize do
       -- disp progress
       -- xlua.progress(t, trainData.data:size(1))
       -- Check size (for last batch)
-      bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1);
+      bSize = math.min(options.batchSize, trainData.data:size(options.batchDim) - t + 1);
       if (bSize ~= options.batchSize) then
 	 -- Grab the opportunity to make some space
 	 inputs = nil; targets = nil; collectgarbage();
 
 	 -- Re-allocate mini batch space
-	 inputs = allocate_batch(trainData, bSize)
+	 inputs = allocate_batch(trainData, bSize, options)
    
-	 -- Initialize targets 
+	 -- Initialize targets
 	 targets = torch.zeros(bSize);
 	 
 	 -- Switch data to cuda
@@ -344,7 +380,7 @@ function supervisedTrain(model, trainData, options)
       end
       
       local batchSize = inputs:size(1)
-      local seqLen, featSize = inputs[1]:size(1), inputs[1]:size(2)
+      local seqLen, featSize = inputs[1]:size(options.tDim), inputs[1]:size(options.featsDim)
       
       -- TODO TODO TODO --
       -- CHANGE THIS, ONLY TEMPORARY
@@ -440,88 +476,41 @@ function supervisedTrain(model, trainData, options)
    return (1 - confusion.totalValid)
 end
 
+----------------------------------------------------------------------
+-- Main reconstruction learning function
+-- TODO: harmonize with other functions (use minibatch iterator)
+-- Rely on a optimization structure with options
+--  . save          ('results')   - subdirectory to save/log experiments in
+--  . visualize     (false)       - visualize input data and weights during training
+--  . plot          (false)       - live plot
+--  . optimization  ('SGD')       - optimization method: SGD | ASGD | CG | LBFGS
+--  . learningRate  (1e-3)        - learning rate at t=0
+--  . batchSize     (1)           - mini-batch size (1 = pure stochastic)'
+--  . weightDecay   (0)           - weight decay (SGD only)
+--  . momentum      (0)           - momentum (SGD only)
+--  . t0            (1)           - start averaging at t0 (ASGD only), in nb of epochs
+--  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
+--  . type          ('float')     - type of the data: float|double|cuda
+--
 function unsupervisedTrain(model, trainData, epoch, options)
    -- epoch tracker
    local epoch = epoch or 1
    -- time variable
    local time = sys.clock()
+
+   print('Hi')
    
    -- Store error
    local err = 0
    
    -- set model to training mode (for modules that differ in training and testing, like Dropout)
    model:training();
-   -- shuffle order at each epoch
-   shuffle = torch.randperm(trainData.data:size(1));
    
    -- do one epoch
    print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
 
-   -- Pre-allocate mini batch space   
-   local inputs = allocate_batch(trainData, options.batchSize)
-   -- Targets have same size as input
-   local targets = torch.zeros(inputs:size())
-   
-   -- Switch data to cuda
-   if options.cuda then
-      inputs = inputs:cuda();
-      targets = targets:cuda();
-   end
-   for t = 1,trainData.data:size(1),options.batchSize do
-      -- disp progress
-      -- xlua.progress(t, trainData.data:size(1))
-      -- Check size (for last batch)
-      bSize = math.min(options.batchSize, trainData.data:size(1) - t + 1);
-
-      -- Potential batch space memory trimming
-      if (bSize ~= options.batchSize) then
-	 -- Grab the opportunity to make some space
-	 inputs = nil; targets = nil; collectgarbage("count");
-	 
-	 -- Pre-allocate mini batch space
-	 inputs = allocate_batch(trainData, bSize)
-	 targets = torch.zeros(inputs:size())
-	 
-	 -- Switch data to cuda
-	 if options.cuda then
-	    inputs = inputs:cuda();
-	    targets = targets:cuda();
-	 end
-      end
-
-      local k = 1;
-      -- iterate over mini-batch examples
-      for i = t, t+bSize-1 do
-         -- load new sample
-	 inputs[k] = trainData.data[shuffle[i]];
-         k = k + 1
-      end
-      
-      -- Initialize targets
-      if options.predict then
-	 -- Train model to predict subsequent input steps
-	 local k = 1;
-	 for i = t, t+bSize-1 do
-	    -- load new sample
-	    targets[k] = trainData.targets[shuffle[i]];
-	    k = k + 1
-	 end
-      elseif options.inpainting then
-	 -- Perform bidirectional training with inpaiting criterion
-	 -- TODO
-	 error('TODO')
-      else
-	 error('Unhandled case')
-      end
-
-      local seqLen, featSize = inputs[1]:size(1), inputs[1]:size(2)
-      
-      -- TODO TODO TODO --
-      -- CHANGE THIS, ONLY TEMPORARY
-      local inputs_recTensor = inputs -- makeRecurrentTensor(inputs)
-      local targets_recTensor = targets -- makeRecurrentTensor(targets)
-      
-      if options.cuda then inputs_recTensor = inputs_recTensor:cuda() end
+   for inputs, targets in minibatchIterator(trainData, options) do
+      print(inputs:size())
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
 	 -- get new parameters
@@ -535,12 +524,9 @@ function unsupervisedTrain(model, trainData, epoch, options)
 	 -- [[ Evaluate function for a complete mini-batch at once ]] --
 	 -- estimate forward pass
 	 
-	 local output = model:forward(inputs_recTensor)
+	 local output = model:forward(inputs)
 	 -- estimate classification (compare to target)
-	 -- print(output:size())
-	 -- print(targets:size())
-	 local err = criterion:forward(output,
-				       targets_recTensor)
+	 local err = criterion:forward(output, targets)
 	 -- TODO
 	 -- Add the sparsity here !
 	 -- TODO
@@ -548,10 +534,8 @@ function unsupervisedTrain(model, trainData, epoch, options)
 	 -- compute overall error
 	 f = f + err
 	 -- estimate df/dW (perform back-prop)
-	 local gradOutputs = criterion:backward(output,
-						targets_recTensor)
-	 local gradInputs = model:backward(inputs_recTensor,
-					   gradOutputs)
+	 local gradOutputs = criterion:backward(output, targets)
+	 local gradInputs = model:backward(inputs, gradOutputs)
 	 
 	 -- Adjust weights
 	 model:updateParameters(options.learningRate)
@@ -579,6 +563,7 @@ function unsupervisedTrain(model, trainData, epoch, options)
       else
          _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
 	 -- TODO: check the /, changed to this from a *, maybe wrong
+	 local bSize = inputs:size(options.batchDim)
 	 err = err + fs[1] / bSize -- so that err is indep of batch size
       end
       -- TODO
@@ -591,23 +576,19 @@ function unsupervisedTrain(model, trainData, epoch, options)
    
    -- time taken
    time = sys.clock() - time
-   time = time / trainData.data:size(1)
+   time = time / trainData.data:size(options.batchDim)
    print("\n==> time to learn 1 sample = " .. (time*1000) .. 'ms')
 
    if options.plot then
       trainLogger:style{['% mean class accuracy (train set)'] = '-'}
       trainLogger:plot()
    end
-   -- save/log current net
-   local filename = paths.concat(options.save, 'model.net')
-   --os.execute('mkdir -p ' .. sys.dirname(filename))
-   --print('==> saving model to '..filename)
-   --torch.save(filename, model)
+
    return err
 end
 
 ----------------------------------------------------------------------
--- Main supervised learning function
+-- Supervised testing function (get forward pass error)
 -- Rely on a optimization structure with options
 --  . save          ('results')   - subdirectory to save/log experiments in
 --  . visualize     (false)       - visualize input data and weights during training
@@ -723,75 +704,18 @@ function unsupervisedTest(model, testData, options)
    -- TODO
    -- set model to evaluate mode (for modules that differ in training and testing, like Dropout)
    model:evaluate();
-   -- Pre-allocate mini batch space
-   local inputs = allocate_batch(testData, options.batchSize)
-   local targets = torch.zeros(inputs:size())
-   
-   -- Switch data to cuda
-   if options.cuda then
-      inputs = inputs:cuda();
-      targets = targets:cuda();
-   end
 
-   -- test over test data
-   print('==> testing on test set:')
-   for t = 1,testData.data:size(1),options.batchSize do
-      -- disp progress
-      --xlua.progress(t, testData.data:size(1))
-      -- Check size of batch (for last smaller)
-      bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
-
-      -- Potential memory re-allocation to save space
-      if (bSize ~= options.batchSize) then
-	 inputs = nil; targets = nil; collectgarbage()
-
-	 inputs = allocate_batch(testData, bSize)
-	 targets = torch.zeros(inputs:size());
-	 
-	 -- Switch data to cuda
-	 if options.cuda then
-	    inputs = inputs:cuda();
-	    targets = targets:cuda();
-	 end
-      end
-      
-      -- iterate over mini-batch examples
-      local k = 1;
-      for i = t, t+bSize-1 do
-	 inputs[k] = testData.data[i];
-	 k = k + 1;
-      end
-      
-      -- Initialize targets
-      if options.predict then
-	 -- Train model to predict subsequent input steps
-	 local k = 1;
-	 for i = t, t+bSize-1 do
-	    -- load new sample
-	    targets[k] = testData.targets[i];
-	    k = k + 1
-	 end
-      elseif options.inpainting then
-	 -- Perform bidirectional training with inpaiting criterion
-	 -- TODO
-	 error('TODO')
-      else
-	 error('Unhandled case')
-      end
-
-      local inputs_recTensor = makeRecurrentTensor(inputs)
-      local targets_recTensor = makeRecurrentTensor(targets)
-      
+   for inputs, targets in minibatchIterator(testData, options) do
       -- test sample
-      local pred = model:forward(inputs_recTensor)
+      local pred = model:forward(inputs)
       -- in case of combined criterion
       if (torch.type(pred) == 'table') then pred = pred[1]; end
 
-      err = criterion:forward(pred, targets_recTensor)
+      err = criterion:forward(pred, targets)
    end
    -- timing
    time = sys.clock() - time
-   time = time / testData.data:size(1)
+   time = time / testData.data:size(options.batchDim)
    --print("\n==> time to test 1 sample = " .. (time*1000) .. 'ms')
    -- averaged param use?
    if average then
@@ -996,7 +920,8 @@ function __unsupervisedTrain_old(model, testData, params)
       end
       -- optimize on current mini-batch
       _,fs = optimMethod(feval, x, optimState)
-      err = err + fs[1] * params.batchSize -- so that err is indep of batch size
+      local bSize = inputs:size(2)
+      err = err + fs[1] * bSize -- so that err is indep of batch size
       -- normalize
       if params.model:find('psd') then
 	 model:normalize()
