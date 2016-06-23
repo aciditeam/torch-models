@@ -56,6 +56,9 @@ require 'modelVariational'
 require 'modelDRAW'
 -- Graphical models
 
+-- Custom criterions
+require 'criterionAcc'
+
 ----------------------------------------------------------------------
 -- Initialization
 --
@@ -149,19 +152,18 @@ local function subrange(elems, start_idx, end_idx)
    return sub_elems
 end
 
-options.validSubSize = #filenamesValid_sub
+options.validSubSize = #filenamesValid
 options.validSubSize = 100  -- Comment to use the full validation set 
 
-if options.validSubSize < #filenamesValid_sub then
+if options.validSubSize < #filenamesValid then
    print('WARNING! Not using full validation set!')
-   print('Using only the first ..' .. options.validSubSize .. ' elements')
+   print('Using only the first ' .. options.validSubSize .. ' elements')
 end
 
 local filenamesValid_sub = subrange(filenamesValid, 1, options.validSubSize)
 
 local f_load = msds.load.get_btchromas
 -- Validation set as a tensor
-print(filenamesValid_sub)
 local unsupValid_data, unsupValid_targets = import_dataset.load_slice_filenames_tensor(
    filenamesValid_sub, f_load, options)
 local unsupValid = {data = unsupValid_data,
@@ -204,8 +206,11 @@ fd_structures:flush()
 
 -- models = {modelMLP, modelCNN, modelInception, modelVGG};
 models = {modelLSTM};
--- TODO: add Boulanger-Lewandowsky's distance
-criterions = {nn.MSECriterion, nn.DistKLDivCriterion}
+
+-- Threshold for F0 measure:
+local accCriterion_threshold = 0.2
+criterions = {nn.MSECriterion, nn.DistKLDivCriterion,
+	      function () return nn.binaryAccCriterion(accCriterion_threshold) end}
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(models) do
@@ -332,18 +337,26 @@ for k, v in ipairs(models) do
 	 
 	 local validIncreasedEpochs = 0
 
-	 local previous_file_position = 0  -- Track window progress
+	 -- Track window progress for printing utilities
+	 local previous_file_position = 0
+	 local previous_print_valid = 0
+	 
 	 -- Perform sliding window over the training dataset (too large to fit in memory)
 	 for slices, file_position in import_dataset.get_sliding_window_iterator(
 	    {TRAIN = filenamesTrain}, f_load, options) do
 	    print(collectgarbage('count'))
 	    -- print('Start loop on dataset windows')
+	    local loaded_files = file_position - previous_file_position
+	    previous_print_valid = previous_print_valid + loaded_files
 
 	    print('Last loaded file, number: ' .. file_position)
-	    if file_position - previous_file_position > options.printValidationRate then
+	    
+	    -- Print validation rate every <options.printValidationRate> loaded files
+	    if previous_print_valid >= options.printValidationRate then
 	       validErr = unsupervisedTest(model, unsupValid,
 					   options);
 	       print('Current validation error before training: ' .. validErr)
+	       previous_print_valid = 0
 	    end
 	    previous_file_position = file_position
 	    
