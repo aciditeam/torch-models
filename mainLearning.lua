@@ -616,10 +616,10 @@ function supervisedTest(model, testData, options)
    model:evaluate();
    -- Pre-allocate mini batch space
    local inputs = {};
-   if (trainData.data[1]:nDimension() == 1) then
-      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1))
+   if (testData.data[1]:nDimension() == 1) then
+      inputs = torch.Tensor(options.batchSize, testData.data[1]:size(1))
    else
-      inputs = torch.Tensor(options.batchSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+      inputs = torch.Tensor(options.batchSize, testData.data[1]:size(1), testData.data[1]:size(2))
    end
    local targets = torch.zeros(options.batchSize);
    -- Switch data to cuda
@@ -635,10 +635,10 @@ function supervisedTest(model, testData, options)
       -- Check size of batch (for last smaller)
       bSize = math.min(options.batchSize, testData.data:size(1) - t + 1);
       if (bSize ~= options.batchSize) then
-	 if (trainData.data[1]:nDimension() == 1) then
-	    inputs = torch.Tensor(bSize, trainData.data[1]:size(1))
+	 if (testData.data[1]:nDimension() == 1) then
+	    inputs = torch.Tensor(bSize, testData.data[1]:size(1))
 	 else
-	    inputs = torch.Tensor(bSize, trainData.data[1]:size(1), trainData.data[1]:size(2))
+	    inputs = torch.Tensor(bSize, testData.data[1]:size(1), testData.data[1]:size(2))
 	 end
 	 targets = torch.zeros(bSize);
 	 -- Switch data to cuda

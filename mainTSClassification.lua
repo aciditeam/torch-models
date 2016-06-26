@@ -70,7 +70,7 @@ options.visualize = true;
 -- Switching to float (economic)
 torch.setdefaulttensortype('torch.FloatTensor')
 -- Eventual CUDA support
-options.cuda = true;
+options.cuda = false;
 if options.cuda then
    print('==> switching to CUDA')
    local ok, cunn = pcall(require, 'fbcunn')
@@ -90,7 +90,8 @@ torch.setnumthreads(4);
 ----------------------------------------------------------------------
 
 -- Change this directory to point on all UCR datasets
-baseDir = '/home/aciditeam/datasets/TS_Datasets';
+--baseDir = '/home/aciditeam/datasets/TS_Datasets';
+baseDir = '/Users/esling/Dropbox/TS_Datasets';
 
 setList = {'50words','Adiac','ArrowHead','ARSim','Beef',
 	   'BeetleFly','BirdChicken','Car','CBF','Chlorine','CinECG',
@@ -193,7 +194,7 @@ end
 -- TODO
 
 -- modelsList = {modelMLP, modelCNN, modelInception, modelVGG};
-modelsList = {modelMLP};
+modelsList = {modelVAE};
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(modelsList) do
@@ -243,51 +244,52 @@ for k, v in ipairs(modelsList) do
       epoch = 0;
       prevValid = 5e20;
       while epoch < options.maxEpochs do
-	 print("Epoch #" .. epoch);
-	 --[[ Adaptive learning ]]--
-	 if options.adaptiveLearning then
-	    -- 1st epochs = Start with purely stochastic (SGD) on single examples
-	    if epoch == 0 then configureOptimizer({optimization = 'SGD', batchSize = 5, learningRate = 5e-3}, unsupData.data:size(2)); end
-	    -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
-	    if epoch == options.subLinearEpoch then configureOptimizer({optimization = 'SGD', batchSize = 128, learningRate = 2e-3}, unsupData.data:size(2)); end
-	    -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
-	    if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
-	 end
-	 --[[ Unsupervised pre-training ]]--
-	 -- Perform unsupervised training of the model
-	 error = curModel:unsupervisedTrain(model, unsupData, options);
-	 print("Reconstruction error (train) : " .. error);
-	 --[[ Validation set checking ]]--
-	 if epoch % options.validationRate == 0 then
-	    -- Check reconstruction error on the validation data
-	    validError = curModel:unsupervisedTest(model, unsupValid, options);
-	    print("Reconstruction error (valid) : " .. validError);
-	    -- The validation error has risen since last checkpoint
-	    if validError > prevValid then
-	       -- Reload the last saved model
-	       torch.load('results/model-pretrain-layer' .. l .. '.net');
-	       -- Stop the learning
-	       print(" => Stop learning");
-	       break; 
-	    end
-	    -- Otherwise save the current model
-	    torch.save('results/model-pretrain-layer' .. l .. '.net', model);
-	    -- Keep the current error
-	    prevValid = validError;
-	 end
-	 epoch = epoch + 1;
-	 -- Collect the garbage
-	 print("End of epoch memory count:");
-	 print(collectgarbage("count"));
-	 collectgarbage();
-	 print("End of epoch memory (after collect):");
-	 print(collectgarbage("count"));
+        print("Epoch #" .. epoch);
+        --[[ Adaptive learning ]]--
+        if options.adaptiveLearning then
+          -- 1st epochs = Start with purely stochastic (SGD) on single examples
+          if epoch == 0 then configureOptimizer({optimization = 'SGD', batchSize = 5, learningRate = 5e-3}, unsupData.data:size(2)); end
+          -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
+          if epoch == options.subLinearEpoch then configureOptimizer({optimization = 'SGD', batchSize = 128, learningRate = 2e-3}, unsupData.data:size(2)); end
+          -- Remaining epochs = Advanced learning algorithm user-selected (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX | FISTALS | NAG | RMSPROP | RPROP | CMAES)
+          if epoch == options.superLinearEpoch then configureOptimizer(options, unsupData.data:size(2)); end
+        end
+        --[[ Unsupervised pre-training ]]--
+        -- Perform unsupervised training of the model
+        error = curModel:unsupervisedTrain(model, unsupData, options);
+        print("Reconstruction error (train) : " .. error);
+        --[[ Validation set checking ]]--
+        if epoch % options.validationRate == 0 then
+          -- Check reconstruction error on the validation data
+          validError = curModel:unsupervisedTest(model, unsupValid, options);
+          print("Reconstruction error (valid) : " .. validError);
+          -- The validation error has risen since last checkpoint
+          if validError > prevValid then
+            -- Reload the last saved model
+            torch.load('results/model-pretrain-layer' .. l .. '.net');
+            -- Stop the learning
+            print(" => Stop learning");
+            break; 
+          end
+          -- Otherwise save the current model
+          --torch.save('results/model-pretrain-layer' .. l .. '.net', model);
+          -- Keep the current error
+          prevValid = validError;
+        end
+        epoch = epoch + 1;
+        -- Collect the garbage
+        print("End of epoch memory count:");
+        print(collectgarbage("count"));
+        collectgarbage();
+        print("End of epoch memory (after collect):");
+        print(collectgarbage("count"));
       end
       -- Keep trained layer in table
       trainedLayers[l] = model;
       -- Retrieve the encoding layer only
       model = curModel:retrieveEncodingLayer(model)
       -- Put model in evaluation mode
+      print(model);
       model:evaluate();
       -- Prepare a set of activations
       forwardedData = {data = {}};
