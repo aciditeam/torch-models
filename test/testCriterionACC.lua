@@ -14,6 +14,8 @@ require 'nn'
 
 require '../criterionAcc.lua'
 
+torch.setdefaulttensortype('torch.FloatTensor')
+
 -- Initialize data
 
 local inputs = torch.rand(4, 12)  -- Random batch of 4 chromas
@@ -41,12 +43,17 @@ print(targets_threshold)
 print('Differences:')
 print(inputs_threshold:ne(targets_threshold))
 
+local manual_error = inputs_threshold:ne(targets_threshold):float():
+   div(inputs_threshold:numel()):
+   sum()
+print('Manual error computation: ' .. manual_error)
+
 local criterion = nn.binaryAccCriterion(threshold)
 
 print('Criterion forward:')
 local output = criterion:forward(inputs, targets)
 
-print('Error: ' .. output)
+print('Criterion error: ' .. output)
 
 print('Criterion backward:')
 local gradInput = criterion:backward(inputs, targets)
