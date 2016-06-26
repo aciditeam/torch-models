@@ -105,7 +105,7 @@ options.sliceSize = 128
 -- Not all the dataset is loaded into memory in a single pass,
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
-options.datasetWindowSize = 64
+options.datasetWindowSize = 128
 options.datasetMaxEpochs = 100
 options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2) 
 
@@ -114,7 +114,7 @@ options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2)
 options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
-options.batchSize = 32;
+options.batchSize = 64;
 
 -- Use a sliding window on the sequences to train on a lot of small sequences
 options.slidingWindowSize = 32;
@@ -153,7 +153,7 @@ local function subrange(elems, start_idx, end_idx)
 end
 
 options.validSubSize = #filenamesValid
-options.validSubSize = 100  -- Comment to use the full validation set 
+options.validSubSize = 300  -- Comment to use the full validation set 
 
 if options.validSubSize < #filenamesValid then
    print('WARNING! Not using full validation set!')
@@ -286,7 +286,7 @@ for k, v in ipairs(models) do
       
       -- Set of trained layers
       trainedLayers = {};
-            
+      
       -- -- Switch training data to GPU
       -- if options.cuda then
       --    unsupData.data = unsupData.data:cuda();
@@ -332,7 +332,7 @@ for k, v in ipairs(models) do
 
       local datasetEpoch
       -- Perform SGD on this subset of the dataset
-      for datasetEpoch = 1, options.datasetMaxEpochs do
+      for datasetEpoch = 0, options.datasetMaxEpochs do
 	 local f_load = msds.load.get_btchromas
 	 
 	 local validIncreasedEpochs = 0
@@ -434,38 +434,39 @@ for k, v in ipairs(models) do
 	    err = unsupervisedTrain(model, unsupData, datasetEpoch, options);
 	    print("Reconstruction error (train) : " .. err);
 	    
-	    --[[ Validation set checking ]]--
-	    if datasetEpoch % options.validationRate == 0 then
-	       -- Check reconstruction error on the validation data
-	       validErr = unsupervisedTest(model, unsupValid,
-					   options);
-	       print("Reconstruction error (valid) : " .. validErr);
-
-	       if validErr > minValidErr then
-		  -- The validation error has risen since last checkpoint
-
-		  validIncreasedEpochs = validIncreasedEpochs + 1
-		  print('Validation error increased, previous best value was ' ..
-			   validIncreasedEpochs .. ' epochs ago')
-
-		  if validIncreasedEpochs > options.maxValidIncreasedEpochs then
-		     -- Reload the last saved model
-		     model = torch.load(saveLocation);
-		     -- Stop the learning
-		     print(" => Stop learning");
-		     break;
-		  end
-	       else
-		  -- Keep the current error as reference
-		  minValidErr = validErr;
-		  -- Save the current best model
-		  torch.save(saveLocation, model);
-
-		  validIncreasedEpochs = 0
-	       end
-	    end
 	    -- Collect the garbage
 	    collectgarbage();
+	 end
+
+	 --[[ Validation set checking ]]--
+	 if datasetEpoch % options.validationRate == 0 then
+	    -- Check reconstruction error on the validation data
+	    validErr = unsupervisedTest(model, unsupValid,
+					options);
+	    print("Reconstruction error (valid) : " .. validErr);
+
+	    if validErr > minValidErr then
+	       -- The validation error has risen since last checkpoint
+
+	       validIncreasedEpochs = validIncreasedEpochs + 1
+	       print('Validation error increased, previous best value was ' ..
+			validIncreasedEpochs .. ' epochs ago')
+
+	       if validIncreasedEpochs > options.maxValidIncreasedEpochs then
+		  -- Reload the last saved model
+		  model = torch.load(saveLocation);
+		  -- Stop the learning
+		  print(" => Stop learning");
+		  break;
+	       end
+	    else
+	       -- Keep the current error as reference
+	       minValidErr = validErr;
+	       -- Save the current best model
+	       torch.save(saveLocation, model);
+
+	       validIncreasedEpochs = 0
+	    end
 	 end
       end
       -- end
