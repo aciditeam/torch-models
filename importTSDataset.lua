@@ -487,6 +487,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    local slice_size = options.sliceSize
 
    local train_examples_num = #sets['TRAIN']
+   main_window_size = math.min(main_window_size, train_examples_num)
    
    -- Avoid skipping some examples because of a step too long
    if sliding_step > main_window_size then
@@ -513,7 +514,7 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    -- Compute size of windows for auxiliary subsets (validation, testing...)
    -- Sizes are chosen to be of the same ratio as for the training set.
    -- 
-   -- EDIT: Do not use this, instead use a FIXED validation set!!
+   -- EDIT: Do not use this, instead use a fixed validation set!
    local function get_win_step_sizes(elems, subsetType, sizes)
       local elems_num = #elems
       local min_win_size = math.min(elems_num, 1)
@@ -533,7 +534,6 @@ function M.get_sliding_window_iterator(sets, f_load, options)
    local positions = {}  -- current position of window on the datasets
    for subsetType, subset in pairs(sets) do
       get_win_step_sizes(subset, subsetType, sizes)
-      print(sizes[subsetType])
       positions[subsetType] = 1
    end
 
@@ -601,8 +601,8 @@ function M.get_sliding_window_iterator(sets, f_load, options)
 	    step_size = sizes[subsetType]['stepSize']
 	    slicesNumbers_erase = subrange(slicesNumber[subsetType],
 					   prev_win_start,
-					   prev_win_start+step_size-1 - 1)
-
+					   prev_win_start+step_size-1)
+	    
 	    local erase_slices_num_total = sum(slicesNumbers_erase)
 	    
 	    for dataType, slicesSubsetData in pairs(slicesSubset) do
