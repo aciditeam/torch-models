@@ -187,25 +187,50 @@ end
 -- Compute clustering
 ---------------------------------------------
 
+local msds = require './importMSDS'
+
+-- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
+local filter_suffix = '.dat'  -- use '.dat' for precomputed chromas
+local filenamesSets, datasetFolders = import_dataset.import_sets_filenames(msds.subset.path,
+									   msds.subset.sets,
+									   filter_suffix)
+
+local filenames = filenamesSets['TRAIN']
+local dataset = datasetFolders['TRAIN']
+
+local function subrange(elems, start_idx, end_idx)
+   local sub_elems = {}
+   for i=start_idx, end_idx do
+      table.insert(sub_elems, elems[i])
+   end
+   return sub_elems
+end
+   
+local saveFolder = '/Users/bazin/work/machine_learning/clusterings/msds-chromagrams/'
+
+local f_load = msds.load.get_btchromas
+local niter = options.datasetMaxEpochs
+local batchSize = options.batchSize
+local callback = nil
+local verbose = true
+
+-- Write a table to a file (not recursive)
+--
+-- Input:
+--  * fd, an open file descriptor
+--  * tableIn, the table to write
+--  * mainTableName, 
+local function writeTable(fd, mainTableName, tableIn)
+   fd:write(mainTableName .. ':\n')
+   for key, val in pairs(tableIn) do
+      fd:write('\t' .. key .. ': ' .. tostring(val) .. '\n')
+   end
+   fd:write('\n\n')
+   fd:flush()
+end
+
 for _, k in ipairs({10, 20, 50, 100}) do
    print('\nSTART: Computing clustering with ' .. k .. ' clusters\n')
-   
-   local saveFolder = '/data/Documents/machine_learning/clusterings/msds-chromagrams/'
-
-   -- Write a table to a file (not recursive)
-   --
-   -- Input:
-   --  * fd, an open file descriptor
-   --  * tableIn, the table to write
-   --  * mainTableName, 
-   local function writeTable(fd, mainTableName, tableIn)
-      fd:write(mainTableName .. ':\n')
-      for key, val in pairs(tableIn) do
-	 fd:write('\t' .. key .. ': ' .. tostring(val) .. '\n')
-      end
-      fd:write('\n\n')
-      fd:flush()
-   end
 
    -- Unique identifier to save clusterings for future use
    -- (format: year_month_day-hour_minute_second)
@@ -215,32 +240,6 @@ for _, k in ipairs({10, 20, 50, 100}) do
 
    writeTable(fd_options, 'Options', options)
    
-   local msds = require './importMSDS'
-
-   -- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
-   local filter_suffix = '.h5'
-   local filenamesSets, datasetFolders = import_dataset.import_sets_filenames(msds.subset.path,
-									      msds.subset.sets,
-									      filter_suffix)
-
-   local filenames = filenamesSets['TRAIN']
-   local dataset = datasetFolders['TRAIN']
-
-   local function subrange(elems, start_idx, end_idx)
-      local sub_elems = {}
-      for i=start_idx, end_idx do
-	 table.insert(sub_elems, elems[i])
-      end
-      return sub_elems
-   end
-
-   local k = 10
-   local f_load = msds.load.get_btchromas
-   local niter = options.datasetMaxEpochs
-   local batchSize = options.batchSize
-   local callback = nil
-   local verbose = true
-
    local kmeansOptions = {k = k, niter = niter, batchSize = batchSize,
 			  files = dataset}
    writeTable(fd_options, 'Kmeans options', kmeansOptions)
