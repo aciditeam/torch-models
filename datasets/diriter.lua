@@ -50,7 +50,7 @@ local function is_suffix(str, suffix)
 end
 
 -- Convert iterator as returned by diriter.dirtree to array
--- Specialized for diriter.dirtree iterator, returning only
+-- Specialized for diriter.dirtree iterator, returning only files with given suffix
 function diriter.to_array(filter_suffix, ...)
    local arr = {}
    local i = 1

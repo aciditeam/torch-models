@@ -1,6 +1,6 @@
 -- Sample an h5 file from the database and load its beat-aligned chromagram
 
-local mgs_getters = require './beatAlignedFeats'
+local msds_getters = require './beatAlignedFeats'
 local file_sample = require '../sampleFile'
 
 local M = {}
@@ -16,8 +16,7 @@ function M.get_chroma_sampler(root_path)
       local batch_size = #filenames
       local bt_chromas_batch = {}
       for i = 1, batch_size do
-	 local h5read = mgs_getters.open_h5_file_read(filenames[i])
-	 local bt_chromas = mgs_getters.get_btchromas(h5read)
+	 local bt_chromas = msds_getters.get_btchromas(filenames[i])
 
 	 table.insert(bt_chromas_batch, bt_chromas)
       end

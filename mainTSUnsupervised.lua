@@ -59,6 +59,8 @@ require 'modelDRAW'
 -- Custom criterions
 require 'criterionAcc'
 
+local sampleFile = require './datasets/sampleFile'
+
 ----------------------------------------------------------------------
 -- Initialization
 --
@@ -137,7 +139,7 @@ end
 local msds = require './importMSDS'
 
 -- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
-local filter_suffix = '.h5'
+local filter_suffix = '.dat'
 local filenamesSets = import_dataset.import_sets_filenames(msds.subset.path,
 							   msds.subset.sets,
 							   filter_suffix)
@@ -164,28 +166,22 @@ local filenamesValid_sub = subrange(filenamesValid, 1, options.validSubSize)
 
 local f_load = msds.load.get_btchromas
 -- Validation set as a tensor
-local unsupValid_data, unsupValid_targets = import_dataset.load_slice_filenames_tensor(
+local unsupValid = import_dataset.load_slice_filenames_tensor(
    filenamesValid_sub, f_load, options)
-local unsupValid = {data = unsupValid_data,
-		    targets = unsupValid_targets}
 
-print(unsupValid_data:size())
+print(unsupValid.data:size())
 
 -- Training set
-local filenamesTrain = filenamesSets["TRAIN"];
+local filenamesTrain = filenamesSets['TRAIN'];
 
 -- Randomize training examples order
-local function shuffle(elems)
-   local elemsShuffle = {}
-   local indexes = torch.randperm(#elems)
-   for i=1, #elems do
-      table.insert(elemsShuffle, elems[indexes[i]])
-   end
-   return elemsShuffle
+local function shuffleTable(tableIn)
+   return sampleFile.get_random_subset(tableIn, #tableIn)
 end
 
-filenamesTrain = shuffle(filenamesTrain)
+filenamesTrain = shuffleTable(filenamesTrain)
 
+print(filenamesTrain)
 
 ----------------------------------------------------------------------
 -- Iterating over all potential models
@@ -338,12 +334,12 @@ for k, v in ipairs(models) do
 	 local validIncreasedEpochs = 0
 
 	 -- Track window progress for printing utilities
-	 local previous_file_position = 0
+	 local previous_file_position = 1
 	 local previous_print_valid = 0
 	 
 	 -- Perform sliding window over the training dataset (too large to fit in memory)
 	 for slices, file_position in import_dataset.get_sliding_window_iterator(
-	    {TRAIN = filenamesTrain}, f_load, options) do
+	    filenamesTrain, f_load, options) do
 	    print(collectgarbage('count'))
 	    -- print('Start loop on dataset windows')
 	    local loaded_files = file_position - previous_file_position
@@ -363,7 +359,7 @@ for k, v in ipairs(models) do
 	    local miniSequences = {}
 	    -- Take a random subset of examples and slice them into
 	    -- small training examples with size options.slidingWindowSize
-	    for dataType, dataSubset in pairs(slices['TRAIN']) do
+	    for dataType, dataSubset in pairs(slices) do
 	       -- Iterate over inputs and targets
 	       local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 	       miniSequences[dataType] = smallSlidingWindowBatch
@@ -379,7 +375,7 @@ for k, v in ipairs(models) do
 	    -- -- Create minibatch
 	    -- local unsupData = {}
 	    -- -- Gets random indexes for both inputs and targets
-	    -- local indexes = torch.randperm(slices['TRAIN']['data']:size(options.batchDim)):
+	    -- local indexes = torch.randperm(slices['data']:size(options.batchDim)):
 	    --    sub(1, options.batchSize):long()
 
 	    -- for dataType, dataSubset in pairs(miniSequences) do
@@ -390,7 +386,7 @@ for k, v in ipairs(models) do
 	    
 	    -- -- Take a random subset of examples and slice them into
 	    -- -- small training examples with size options.slidingWindowSize
-	    -- for dataType, dataSubset in pairs(slices['TRAIN']) do
+	    -- for dataType, dataSubset in pairs(slices) do
 	    -- 	  -- Iterate over inputs and targets
 	    -- 	  local shuffledExamplesSubset = dataSubset:index(options.batchDim, indexes)
 	    -- 	  local smallSlidingWindowBatch = batchSlidingWindow(

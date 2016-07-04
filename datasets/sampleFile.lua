@@ -40,7 +40,7 @@ function M.get_generator(root_path, filter_suffix)
       local sample_size = sample_size or 1
 
       -- draw sample_size unique filenames
-      -- TODO: a full files_n permutation is sub-optimal, but how
+      -- TODO: a full permutation of {1, .., files_n} is sub-optimal, but how
       -- to make it better?
       local sample = M.get_random_subset(filenames, sample_size)
       return sample

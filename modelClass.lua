@@ -80,3 +80,17 @@ end
 
 function modelClass:weightsInitialize(model)
 end
+
+function modelClass:registerStructure(hyperParams, nbLayers)
+   -- for l = 1,nbLayers do
+   -- hyperParams:registerParameter("layer_" .. l, 'int', {32, 4096});
+   -- end
+end
+
+function modelClass:extractStructure(hyperParams, structure)
+  -- structure.layers = {};
+  -- -- for l = 1,structure.nLayers do
+  -- --    structure.layers[l] = hyperParams:getCurrentParameter("layer_" .. l);
+  -- -- end
+  -- return structure
+end

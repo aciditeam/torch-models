@@ -45,11 +45,11 @@ options.sliceSize = 128
 
 -- Not all the dataset is loaded into memory in a single pass
 options.datasetWindowSize = 300
-options.datasetMaxEpochs = 50
+options.datasetMaxEpochs = 20
 options.datasetWindowStepSize = options.datasetWindowSize
 
 -- Training parameters
-options.batchSize = 64;
+options.batchSize = 128;
 
 ---------------------------------------------
 -- Modified k-means (online) (via unsup)
@@ -73,15 +73,15 @@ function onlineKmeans(filenames, k, f_load, niter, batchsize, callback, verbose)
    k = k or error('missing argument: ' .. help)
    niter = niter or 1
    batchsize = batchsize or math.min(1000, #filenames)
-
-   local examplesNum = 0
-   -- Get number of chromagrams in dataset
-   print('Computing total number of chromas in dataset')
-   for file_i, file in ipairs(filenames) do
-      if verbose then xlua.progress(file_i, #filenames) end
-      local sequence = f_load(file)
-      examplesNum = examplesNum + sequence:size(1)
-   end
+   
+   -- local examplesNum = 0
+   -- -- Get number of chromagrams in dataset
+   -- print('Computing total number of chromas in dataset')
+   -- for file_i, file in ipairs(filenames) do
+   --    if verbose then xlua.progress(file_i, #filenames) end
+   --    local sequence = f_load(file)
+   --    examplesNum = examplesNum + sequence:size(1)
+   -- end
 
    -- resize data
    local featsNum = f_load(filenames[1]):size(2) or error(
@@ -97,7 +97,7 @@ function onlineKmeans(filenames, k, f_load, niter, batchsize, callback, verbose)
    local pow = torch.pow
 
    -- dims
-   local nsamples = examplesNum
+   local nsamples = examplesNum or print('WARNING: nsamples not initialized')
    local ndims = featsNum
 
    -- initialize means
@@ -107,23 +107,24 @@ function onlineKmeans(filenames, k, f_load, niter, batchsize, callback, verbose)
       centroids[i]:div(centroids[i]:norm())
    end
    local totalcounts = torch.zeros(k)
-      
+   
    -- callback?
    if callback then callback(0,centroids:reshape(k_size),totalcounts) end
 
+   local no_overlap = true
+   
    -- do niter iterations
    for i = 1,niter do
+      print('Iteration number ' .. i .. ' of ' .. niter)
       for slice, file_position in import_dataset.get_sliding_window_iterator(
-	 {TRAIN = filenames}, f_load, options) do
+	 filenames, f_load, options, no_overlap) do
 	 -- progress
-	 if verbose then xlua.progress(i,niter) end
+	 if verbose then xlua.progress(file_position, #filenames) end
 	 
-	 sliceData = slice['TRAIN']['data']
+	 local sliceData = slice['data']
 	 sliceData = sliceData:reshape(sliceData:size(options.tDim) *
 					  sliceData:size(options.batchDim),
-			       sliceData:size(options.featsDim))
-
-	 print(sliceData:size())
+				       sliceData:size(options.featsDim))
 	 
 	 local sliceData2 = sum(pow(sliceData,2),2)
 	 
@@ -175,6 +176,7 @@ function onlineKmeans(filenames, k, f_load, niter, batchsize, callback, verbose)
 	    local ret = callback(i,centroids:reshape(k_size),totalcounts) 
 	    if ret then break end
 	 end
+	 collectgarbage(); collectgarbage()
       end
    end
    -- done
@@ -185,33 +187,74 @@ end
 -- Compute clustering
 ---------------------------------------------
 
-local saveFolder = '/data/Documents/machine_learning/models/time_series/'
+for _, k in ipairs({10, 20, 50, 100}) do
+   print('\nSTART: Computing clustering with ' .. k .. ' clusters\n')
+   
+   local saveFolder = '/data/Documents/machine_learning/clusterings/msds-chromagrams/'
 
-local msds = require './importMSDS'
-
--- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
-local filter_suffix = '.h5'
-local filenamesSets = import_dataset.import_sets_filenames(msds.subset.path,
-							   msds.subset.sets,
-							   filter_suffix)
-
-local filenames = filenamesSets['TRAIN']
-
-local function subrange(elems, start_idx, end_idx)
-   local sub_elems = {}
-   for i=start_idx, end_idx do
-      table.insert(sub_elems, elems[i])
+   -- Write a table to a file (not recursive)
+   --
+   -- Input:
+   --  * fd, an open file descriptor
+   --  * tableIn, the table to write
+   --  * mainTableName, 
+   local function writeTable(fd, mainTableName, tableIn)
+      fd:write(mainTableName .. ':\n')
+      for key, val in pairs(tableIn) do
+	 fd:write('\t' .. key .. ': ' .. tostring(val) .. '\n')
+      end
+      fd:write('\n\n')
+      fd:flush()
    end
-   return sub_elems
+
+   -- Unique identifier to save clusterings for future use
+   -- (format: year_month_day-hour_minute_second)
+   local session_date = os.date('%Y%m%d-%H%M%S', os.time())
+   local savePrefix = saveFolder .. session_date .. '-k_'.. k .. '-'
+   local fd_options = assert(io.open(savePrefix .. 'options.txt', 'w'))
+
+   writeTable(fd_options, 'Options', options)
+   
+   local msds = require './importMSDS'
+
+   -- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
+   local filter_suffix = '.h5'
+   local filenamesSets, datasetFolders = import_dataset.import_sets_filenames(msds.subset.path,
+									      msds.subset.sets,
+									      filter_suffix)
+
+   local filenames = filenamesSets['TRAIN']
+   local dataset = datasetFolders['TRAIN']
+
+   local function subrange(elems, start_idx, end_idx)
+      local sub_elems = {}
+      for i=start_idx, end_idx do
+	 table.insert(sub_elems, elems[i])
+      end
+      return sub_elems
+   end
+
+   local k = 10
+   local f_load = msds.load.get_btchromas
+   local niter = options.datasetMaxEpochs
+   local batchSize = options.batchSize
+   local callback = nil
+   local verbose = true
+
+   local kmeansOptions = {k = k, niter = niter, batchSize = batchSize,
+			  files = dataset}
+   writeTable(fd_options, 'Kmeans options', kmeansOptions)
+
+   fd_options:close()
+   
+   centroids, totalCounts = onlineKmeans(filenames, k, f_load, niter, batchSize,
+					 callback, verbose)
+   
+   local filename_centroids = savePrefix .. 'centroids.dat'
+   torch.save(filename_centroids, centroids)
+   
+   local filename_totalCounts = savePrefix .. 'totalcounts.dat'
+   torch.save(filename_totalCounts, totalCounts)
+
+   collectgarbage(); collectgarbage()
 end
-
-local k = 10
-local f_load = msds.load.get_btchromas
-local niter = options.datasetMaxEpochs
-local batchSize = options.batchSize
-local callback = nil
-local verbose = true
-
-centroids, totalcounts = onlineKmeans(subrange(filenames, 1, 5),
-				      k, f_load, niter, batchSize, callback, verbose)
-

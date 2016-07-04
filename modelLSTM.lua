@@ -138,7 +138,7 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs))
       lstmModel = nn.Sequencer(model)
       model = nn.Sequential()
-
+      
       -- Moved out of the LSTM module
       -- -- Number of windows we will consider
       -- local nWins = torch.ceil(
@@ -146,7 +146,7 @@ function modelLSTM:defineModel(structure, options)
       -- model:add(nn.Printer('Sliding window', 'size'))
       -- -- Here we add the subsequencing trick
       -- model:add(nn.SequencerSlidingWindow(1, self.windowSize, self.windowStep))
-
+      
       -- model:add(nn.Printer('Start LSTM', 'size'))
       model:add(lstmModel)
       -- model:add(nn.Printer('Output JoinTable', 'size'))
@@ -176,13 +176,13 @@ function modelLSTM:definePretraining(structure, l, options)
    --[[ Encoder part ]]--
    local finalEncoder = nn.Sequential()
    local encoder = nn.Sequential()
-   if l == 1 then 
+   if l == 1 then
       if (self.sequencer) then
 	 nIn = self.windowSize
       else
 	 nIn = structure.nInputs
-      end 
-   else 
+      end
+   else
       nIn = structure.layers[l-1]
    end
    curLSTM = nn.FastLSTM(nIn, structure.layers[l], self.rho)

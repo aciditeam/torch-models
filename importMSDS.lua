@@ -28,13 +28,24 @@ local local_load = require './datasets/msds/beatAlignedFeats'
 local hdf5 = require 'hdf5'
 
 function M.load.get_btchromas(h5)
-   if type(h5) ~= 'string' then h5 = hdf5.HDF5File.filename(h5) end
-      
-   if use_blacklist and exists(h5, blacklist, is_suffix) then
+   local h5Filename
+   if type(h5) ~= 'string' then
+      h5Filename = hdf5.HDF5File.filename(h5)
+   else
+      h5Filename = h5
+   end
+
+   if is_suffix(h5Filename, '.dat') then
+      -- Uses precomputed beat-aligned chromagram
+      return torch.load(h5Filename)
+   end
+
+   if use_blacklist and exists(h5Filename, blacklist, is_suffix) then
       print("WARNING: This hdf5 file has been blacklisted as incompatible" ..
 	       ", skipping it")
       return torch.zeros(1, 12)
    end
+   
    return local_load.get_btchromas(h5)
 end
 

@@ -34,11 +34,11 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-bt_getters = require './millionSongGetters'
+local bt_getters = require './millionSongGetters'
 
 torch.setdefaulttensortype('torch.FloatTensor')
 
-function bt_getters.get_btchromas(h5)
+function bt_getters.get_btchromas(h5, verbose)
    -- Get beat-aligned chroma from a song file of the Million Song Dataset
    -- The first dimension indexes time
    -- INPUT:
@@ -48,24 +48,28 @@ function bt_getters.get_btchromas(h5)
    --                  or None if something went wrong (e.g. no beats)
    --
    -- if string, open and get chromas, if h5, get chromas
-   local input_is_string
+   local verbose = verbose or false
+   
+   local input_is_string = false
    if type(h5) == 'string' then
-      input_is_string = true  -- close opened file
+      input_is_string = true  -- remember to close opened file
       h5 = bt_getters.open_h5_file_read(h5)
    end
    
-   chromas = bt_getters.get_segments_pitches(h5):float()
-   segstarts = bt_getters.get_segments_start(h5):float()
-   btstarts = bt_getters.get_beats_start(h5):float()
+   local chromas = bt_getters.get_segments_pitches(h5):float()
+   local segstarts = bt_getters.get_segments_start(h5):float()
+   local btstarts = bt_getters.get_beats_start(h5):float()
 
    if input_is_string then
       h5:close()
    end
    
    if chromas:numel()== 0 or segstarts:numel()== 0 or btstarts:numel()== 0 then
-      print("WARNING: incomplete HDF5 file, "..
-	       "cannot compute beat-aligned chroma, ")
-      print("\treturning dummy (zeros) chromagram")
+      if verbose then
+	 print("WARNING: incomplete HDF5 file, "..
+		  "cannot compute beat-aligned chroma, ")
+	 print("\treturning dummy (zeros) chromagram")
+      end
       return torch.zeros(1, 12)
    end
    
@@ -76,10 +80,10 @@ function bt_getters.get_btchromas(h5)
    -- result for track: 'TR0002Q11C3FA8332D'
    --    segstarts.shape = (708,)
    --    btstarts.shape = (304,)
-   segstarts = segstarts:view(segstarts:numel())
-   btstarts = btstarts:view(btstarts:numel())
+   local segstarts = segstarts:view(segstarts:numel())
+   local btstarts = btstarts:view(btstarts:numel())
    -- aligned features
-   btchroma = align_feats(chromas:t(), segstarts, btstarts) --, duration)
+   local btchroma = align_feats(chromas:t(), segstarts, btstarts) --, duration)
    if not btchroma then
       return nil
    end
@@ -237,8 +241,8 @@ function align_feats(feats, segstarts, btstarts) -- , duration)
    -- result for track: 'TR0002Q11C3FA8332D'
    --    warpmat.shape = (304, 708)
    --    btchroma.shape = (304, 12)
-   warpmat = get_time_warp_matrix(segstarts, btstarts) --, duration)
-   featchroma = torch.mm(warpmat, feats:t():float()):t()
+   local warpmat = get_time_warp_matrix(segstarts, btstarts) --, duration)
+   local featchroma = torch.mm(warpmat, feats:t():float()):t()
    if featchroma:nDimension() < 2 then -- sanity check
       return nil
    end
@@ -296,6 +300,7 @@ function get_time_warp_matrix(segstart_v, btstart_v) --, duration)
       -- find first segment that starts after beat ends
       -- segs_after = np.nonzero((segstart_v - end_sec) >= 0)[0]
       local segs_after_v = (segstart_v - end_sec):ge(0):nonzero()
+      local end_idx
       if segs_after_v:nDimension() == 0 then
 	 end_idx = start_idx
       else
