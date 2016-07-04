@@ -30,6 +30,7 @@ local hdf5 = require 'hdf5'
 function M.load.get_btchromas(h5)
    local h5Filename
    if type(h5) ~= 'string' then
+      -- Assumption that h5 is an open hdf5 file
       h5Filename = hdf5.HDF5File.filename(h5)
    else
       h5Filename = h5
@@ -58,8 +59,7 @@ end
 
 M.subset = {}
 
-M.subset.path = '/data/Documents/machine_learning/datasets/mir/'..
-   'MillionSongSubset/data/'
+M.subset.path = '/Users/bazin/work/machine_learning/datasets/MillionSongSubset/data/'
 
 M.subset.training = {'A/'}
 
