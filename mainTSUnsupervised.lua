@@ -125,13 +125,6 @@ options.slidingWindowStep = 16;
 -- Train to predict next steps
 options.predict = true
 
--- Smaller-sized sliding window over a batch of long examples
-local slidingWindow = nn.SequencerSlidingWindow(1, options.slidingWindowSize,
-						options.slidingWindowStep)
-local function batchSlidingWindow(minibatch)
-   return slidingWindow:forward(minibatch)
-end
-
 ----------------------------------------------------------------------
 -- Initialize datasets
 ----------------------------------------------------------------------
@@ -181,8 +174,6 @@ end
 
 filenamesTrain = shuffleTable(filenamesTrain)
 
-print(filenamesTrain)
-
 ----------------------------------------------------------------------
 -- Iterating over all potential models
 ----------------------------------------------------------------------
@@ -225,7 +216,7 @@ for k, v in ipairs(models) do
    -- Define structure
    structure = {};
    -- Default initialization
-   structure.nLayers = 1;  -- TODO: add more layers
+   structure.nLayers = 3;  -- TODO: add more layers
    structure.nInputs = 12;
    structure.layers = {100, 100, 50, 20};
    structure.nOutputs = structure.nInputs;
@@ -269,12 +260,6 @@ for k, v in ipairs(models) do
 	 parameters, gradParameters = curModel:getParameters(model);
       end
       
-      -- -- TODO: Temporary model redefinition
-      -- model, criterion = nil
-      -- model = nn.SeqLSTM(12, 12)
-      -- criterion = nn.MSECriterion()
-      -- criterion = nn.SequencerCriterion(criterion)
-      
       local fullModelString = tostring(model):gsub('%.', '_')
       fd_structures:write('Network structure ' .. shortModelName ..
 			     ':\n' .. fullModelString .. '\n\n')
@@ -282,31 +267,25 @@ for k, v in ipairs(models) do
       
       -- Set of trained layers
       trainedLayers = {};
-      
-      -- -- Switch training data to GPU
-      -- if options.cuda then
-      --    unsupData.data = unsupData.data:cuda();
-      --    unsupValid.data = unsupValid.data:cuda();
-      -- end
 
       local mainSaveLocation = savePrefix .. shortModelName ..
 	 shortCriterionName
 
       -----------------------------------------------------------
-      -- TODO (check): No loop on layers, uses batch-normalize --
+      -- DISABLED: No loop on layers, uses batch-normalize --
       -----------------------------------------------------------
       --for l = 1, structure.nLayers do
       -- print('Start loop on layers')
       -- To save intermediate results during learning
       -- local layerSaveLocation = mainSaveLocation ..
       --    '-pretrain-layer_' .. l .. '.net'
-
-      local saveLocation = layerSaveLocation or mainSaveLocation .. '.net'
-      
       -- Define the pre-training model
-      -- TODO: disabled this for compatibility, re-enable eventually
+      -- DISABLED: use batch-normalize instead
       -- local model = curModel:definePretraining(structure, l, options);
 
+      
+      local saveLocation = layerSaveLocation or mainSaveLocation .. '.net'
+      
       -- Activate CUDA on the model
       if options.cuda then model:cuda(); end
       -- If classical learning configure the optimizer
@@ -318,20 +297,18 @@ for k, v in ipairs(models) do
       -- 	    configureOptimizer(options, #unsupData.data);
       -- 	 end
       -- end
-
+      
+      -- Keep track of best validation error
       local initialValidError = unsupervisedTest(model, unsupValid,
 						 options);
       print('Initial validation error: ' .. initialValidError)
-      
-      -- Keep track of best validation error
-      local minValidErr = math.huge
+      local validIncreasedEpochs = 0
+      local minValidErr = initialValidError
 
       local datasetEpoch
       -- Perform SGD on this subset of the dataset
       for datasetEpoch = 0, options.datasetMaxEpochs do
-	 local f_load = msds.load.get_btchromas
-	 
-	 local validIncreasedEpochs = 0
+	 xlua.progress(datasetEpoch, options.datasetMaxEpochs)
 
 	 -- Track window progress for printing utilities
 	 local previous_file_position = 1
@@ -356,49 +333,27 @@ for k, v in ipairs(models) do
 	    end
 	    previous_file_position = file_position
 	    
-	    local miniSequences = {}
+	    local unsupTrain = {}
 	    -- Take a random subset of examples and slice them into
 	    -- small training examples with size options.slidingWindowSize
 	    for dataType, dataSubset in pairs(slices) do
 	       -- Iterate over inputs and targets
 	       local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
-	       miniSequences[dataType] = smallSlidingWindowBatch
+	       unsupTrain[dataType] = smallSlidingWindowBatch
 	    end
 
-	    print('Dataset window of size: ')
-	    print(miniSequences['data']:size())
-
-	    -- for epoch=0, options.maxEpochs do
-	    -- print("Epoch #" .. epoch);
-	    -- print(collectgarbage('count'))
-	    
-	    -- -- Create minibatch
-	    -- local unsupData = {}
-	    -- -- Gets random indexes for both inputs and targets
-	    -- local indexes = torch.randperm(slices['data']:size(options.batchDim)):
-	    --    sub(1, options.batchSize):long()
-
-	    -- for dataType, dataSubset in pairs(miniSequences) do
-	    --    unsupData[dataType] = miniSequences[dataType]:index(options.batchDim, indexes)
-	    -- end
-
-	    local unsupData = miniSequences
-	    
-	    -- -- Take a random subset of examples and slice them into
-	    -- -- small training examples with size options.slidingWindowSize
-	    -- for dataType, dataSubset in pairs(slices) do
-	    -- 	  -- Iterate over inputs and targets
-	    -- 	  local shuffledExamplesSubset = dataSubset:index(options.batchDim, indexes)
-	    -- 	  local smallSlidingWindowBatch = batchSlidingWindow(
-	    -- 	     shuffledExamplesSubset)
-	    -- 	  unsupData[dataType] = smallSlidingWindowBatch
-	    -- end
+	    if options.cuda then
+	       for dataType, _ in pairs(slices) do
+		  -- Iterate over inputs and targets
+		  unsupTrain[dataType]:cuda()
+	       end
+	    end
 	    
 	    if (not options.adaptiveLearning) then
-	       if torch.type(unsupData.data) ~= 'table' then
-		  configureOptimizer(options, unsupData.data:size(options.batchDim))
+	       if torch.type(unsupTrain.data) ~= 'table' then
+		  configureOptimizer(options, unsupTrain.data:size(options.batchDim))
 	       else
-		  configureOptimizer(options, #unsupData.data);
+		  configureOptimizer(options, #unsupTrain.data);
 	       end
 	    end
 
@@ -408,26 +363,26 @@ for k, v in ipairs(models) do
 	       if epoch == 0 then
 		  configureOptimizer({optimization = 'SGD', batchSize = 5,
 				      learningRate = 5e-3},
-		     unsupData.data:size(2));
+		     unsupTrain.data:size(2));
 	       end
 	       -- Next epochs = Sub-linear approximate algorithm ASGD with mini-batches
 	       if epoch == options.subLinearEpoch then
 		  configureOptimizer({optimization = 'SGD', batchSize = 128,
 				      learningRate = 2e-3},
-		     unsupData.data:size(2))
+		     unsupTrain.data:size(2))
 	       end
 	       -- Remaining epochs = Advanced learning algorithm user-selected
 	       -- (LBFGS | CG | ADADELTA | ADAGRAD | ADAM | ADAMAX |
 	       --  FISTALS | NAG | RMSPROP | RPROP | CMAES)
 	       if epoch == options.superLinearEpoch then
-		  configureOptimizer(options, unsupData.data:size(options.batchDim))
+		  configureOptimizer(options, unsupTrain.data:size(options.batchDim))
 	       end
 	    end
 	    
 	    --[[ Unsupervised pre-training ]]--
 	    -- Perform unsupervised training of the model
 	    -- err = curModel:
-	    err = unsupervisedTrain(model, unsupData, datasetEpoch, options);
+	    err = unsupervisedTrain(model, unsupTrain, datasetEpoch, options);
 	    print("Reconstruction error (train) : " .. err);
 	    
 	    -- Collect the garbage
@@ -474,21 +429,21 @@ for k, v in ipairs(models) do
       -- Put model in evaluation mode
       model:evaluate();
       -- Prepare a set of activations
-      forwardedData = {data = {}};
+      forwardedTrain = {data = {}};
       forwardedValid = {data = {}};
       
       -- Perform forward propagation on data
-      forwardedData.data = model:forward(unsupData.data);
-      if torch.type(forwardedData.data) ~= 'table' then
-	 forwardedData.data = forwardedData.data:clone()
+      forwardedTrain.data = model:forward(unsupTrain.data);
+      if torch.type(forwardedTrain.data) ~= 'table' then
+	 forwardedTrain.data = forwardedTrain.data:clone()
       else
-	 for i = 1,#forwardedData.data do
-	    forwardedData.data[i] = forwardedData.data[i]:clone()
+	 for i = 1,#forwardedTrain.data do
+	    forwardedTrain.data[i] = forwardedTrain.data[i]:clone()
 	 end
       end
       
       -- Replace previous set
-      unsupData = forwardedData;
+      unsupTrain = forwardedTrain;
       -- Perform forward propagation on validation
       forwardedValid.data = model:forward(unsupValid.data);
       if torch.type(forwardedValid.data) ~= 'table' then
