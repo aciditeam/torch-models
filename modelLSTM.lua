@@ -91,6 +91,12 @@ function modelLSTM:defineModel(structure, options)
    -- Container
    local model = nn.Sequential()
    
+   -- Sliding window to feed the network with small examples
+   -- Smaller-sized sliding window over a batch of long examples
+   if self.sequencer
+   local slidingWindow = nn.SequencerSlidingWindow(1, options.slidingWindowSize,
+						   options.slidingWindowStep)
+   
    -- Hidden layers
    for i = 1, structure.nLayers do
       -- Long Short-Term Memories
@@ -138,24 +144,7 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs))
       lstmModel = nn.Sequencer(model)
       model = nn.Sequential()
-      
-      -- Moved out of the LSTM module
-      -- -- Number of windows we will consider
-      -- local nWins = torch.ceil(
-      -- 	 (structure.nInputs - self.windowSize + 1) / self.windowStep)
-      -- model:add(nn.Printer('Sliding window', 'size'))
-      -- -- Here we add the subsequencing trick
-      -- model:add(nn.SequencerSlidingWindow(1, self.windowSize, self.windowStep))
-      
-      -- model:add(nn.Printer('Start LSTM', 'size'))
       model:add(lstmModel)
-      -- model:add(nn.Printer('Output JoinTable', 'size'))
-      -- model:add(nn.JoinTable(2))
-      -- model:add(nn.Printer('Output Linear reshape', 'size'))
-      -- model:add(nn.Linear(nWins * structure.nOutputs,
-      -- 			  structure.nOutputs))
-      -- model:add(nn.Printer('Should be the last module'))
-      model = model
    else
       -- Recursor case
       lstmLayers = nn.Recursor(model)
@@ -300,4 +289,55 @@ function modelLSTM:parametersRandom()
    -- All possible non-linearities
    self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU}
    self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse}
+end
+
+[[
+List of hyper-parameters:
+
+SlidingWindow:
+size
+step
+
+Topology:
+nLayers
+layers [1 … N]
+layerwiseLinear
+
+Model:
+rho
+layerwiseLinear
+batchNormalize
+addNonLinearity
+nonLinearity
+dropout
+
+Learning:
+optimizationAlgorithm
+learningRate
+(+ algorithm-specific ?) 
+
+
+
+]]
+
+function modelLSTM:registerStructure(hyperParams, nbLayers)
+  for l = 1,nbLayers do
+    hyperParams:registerParameter("layer_" .. l, 'int', {32, 4096});
+    -- hyperParams:registerParameter("conv_" .. l, 'int', {16, 64});
+    -- hyperParams:registerParameter("kernel_" .. l, 'int', {1, 16});
+    -- hyperParams:registerParameter("pool_" .. l, 'int', {1, 4});
+  end
+end
+
+function modelLSTM:registerOptions(hyperParams, options)
+
+function modelLSTM:extractStructure(hyperParams, structure)
+  structure.layers = {};
+  for l = 1,structure.nLayers do
+    structure.layers[l] = hyperParams:getCurrentParameter("layer_" .. l);
+    -- structure.convSize[l] = hyperParams:getCurrentParameter("conv_" .. l);
+    -- structure.kernelWidth[l] = hyperParams:getCurrentParameter("kernel_" .. l);
+    -- structure.poolSize[l] = hyperParams:getCurrentParameter("pool_" .. l);
+  end
+  return structure
 end
