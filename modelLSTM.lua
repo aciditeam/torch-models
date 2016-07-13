@@ -95,9 +95,6 @@ function modelLSTM:defineModel(structure, options)
    for i = 1, structure.nLayers do
       -- Long Short-Term Memories
       if i == 1 then
-	 print(structure.nInputs)
-	 print(structure.layers[i])
-	 print(self.rho)
 	 curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
       else
 	 curLSTM = nn.FastLSTM(structure.layers[i-1], structure.layers[i], self.rho)
