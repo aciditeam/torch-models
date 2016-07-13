@@ -1,5 +1,7 @@
 -- Million-Song Dataset import utilities 
 
+local locals = require './local'
+
 local M = {}
 
 M.load = {}
@@ -59,7 +61,7 @@ end
 
 M.subset = {}
 
-M.subset.path = '/Users/bazin/work/machine_learning/datasets/MillionSongSubset/data/'
+M.subset.path = locals.paths.msdsSubset
 
 M.subset.training = {'A/'}
 

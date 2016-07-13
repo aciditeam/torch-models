@@ -46,4 +46,4 @@ function hyperSampler:randint(minval, maxval)
    assert(torch.type(maxval) == 'number')
    local val = torch.random(minval, maxval)
    return val
-end 
+end

@@ -90,23 +90,15 @@ local modelLSTM, parent = torch.class('modelLSTM', 'modelClass')
 function modelLSTM:defineModel(structure, options)
    -- Container
    local model = nn.Sequential()
-   
-   -- Sliding window to feed the network with small examples
-   -- Smaller-sized sliding window over a batch of long examples
-   if self.sequencer
-   local slidingWindow = nn.SequencerSlidingWindow(1, options.slidingWindowSize,
-						   options.slidingWindowStep)
-   
+
    -- Hidden layers
    for i = 1, structure.nLayers do
       -- Long Short-Term Memories
       if i == 1 then
-	 if (self.sequencer) then
-	    -- curLSTM = nn.FastLSTM(self.windowSize, structure.layers[i], self.rho)
-	    curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
-	 else
-	    curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
-	 end
+	 print(structure.nInputs)
+	 print(structure.layers[i])
+	 print(self.rho)
+	 curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
       else
 	 curLSTM = nn.FastLSTM(structure.layers[i-1], structure.layers[i], self.rho)
       end
@@ -117,6 +109,7 @@ function modelLSTM:defineModel(structure, options)
 	 curLSTM.i2g.bias[{{2*structure.layers[i]+1,3*structure.layers[i]}}]:
 	    fill(1)
       end
+      
       -- Add the bias-adjusted LSTM to the network
       model:add(curLSTM)
       
@@ -125,7 +118,7 @@ function modelLSTM:defineModel(structure, options)
 	 model:add(nn.Linear(structure.layers[i],
 			     structure.layers[i]))
       end
-      
+            
       -- Batch normalization
       if self.batchNormalize then
 	 model:add(nn.BatchNormalization(structure.layers[i]))
@@ -157,6 +150,12 @@ function modelLSTM:defineModel(structure, options)
       model:add(nn.Linear(structure.layers[structure.nLayers],
 			  structure.nOutputs))
    end
+
+   -- Select only actual predictions to concentrate error computation on those
+   local predictionSelector =  nn.Sequential():add(
+      nn.Select(options.tDim, options.sliceSize-(options.predictionLength-1))):add(
+      nn.Unsqueeze(1))
+   model:add(predictionSelector)
    
    return model
 end
@@ -291,53 +290,77 @@ function modelLSTM:parametersRandom()
    self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse}
 end
 
-[[
+--[[
 List of hyper-parameters:
 
-SlidingWindow:
-size
-step
+SlidingWindow:  -> Moved to training script, messes up error computation if done inside
+   of the network
+  X size
+  X step
 
 Topology:
-nLayers
-layers [1 … N]
-layerwiseLinear
+  X nLayers -> handled in an external loop
+  * layers [1 … N]
 
 Model:
-rho
-layerwiseLinear
-batchNormalize
-addNonLinearity
-nonLinearity
-dropout
+  * rho
+  _ layerwiseLinear (boolean)
+  _ batchNormalize (boolean)
+  _ addNonLinearity (boolean)
+  _ nonLinearity (categorical (non linearities, e.g. ReLU))
+  _ dropout (real, [0, 1])
 
 Learning:
-optimizationAlgorithm
-learningRate
-(+ algorithm-specific ?) 
+  _ optimizationAlgorithm (categorical)
+  _ learningRate (real)
+  (+ algorithm-specific ?) 
+--]]
 
-
-
-]]
-
-function modelLSTM:registerStructure(hyperParams, nbLayers)
-  for l = 1,nbLayers do
-    hyperParams:registerParameter("layer_" .. l, 'int', {32, 4096});
-    -- hyperParams:registerParameter("conv_" .. l, 'int', {16, 64});
-    -- hyperParams:registerParameter("kernel_" .. l, 'int', {1, 16});
-    -- hyperParams:registerParameter("pool_" .. l, 'int', {1, 4});
-  end
+-- Register non layer-specific parameters
+function modelLSTM:registerOptions(hyperParams, fastTest)
+   if not fastTest then
+      hyperParams:registerParameter('rho', 'int', {1, 32});
+   else
+      hyperParams:registerParameter('rho', 'int', {1, 5});
+   end
+   hyperParams:registerParameter('layerwiseLinear', 'bool')
+   hyperParams:registerParameter('batchNormalize', 'bool')
+   hyperParams:registerParameter('addNonLinearity', 'bool')
+   hyperParams:registerParameter('nonLinearity', 'catStr', {'relu', 'tanh'})
 end
 
-function modelLSTM:registerOptions(hyperParams, options)
+-- Register non layer-specific parameters
+function modelLSTM:updateOptions(hyperParams)
+   self.rho = hyperParams:getCurrentParameter('rho');
+   self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
+   self.batchNormalize = hyperParams:getCurrentParameter('batchNormalize')
+   self.addNonLinearity = hyperParams:getCurrentParameter('addNonLinearity')
+
+   if self.addNonLinearity then
+      local nonLinearity_string = hyperParams:getCurrentParameter('nonLinearity')
+      print(nonLinearity_string)
+      if nonLinearity_string == 'relu' then
+	 self.nonLinearity = nn.ReLU
+      elseif nonLinearity_string == 'tanh' then
+	 self.nonLinearity = nn.Tanh
+      else
+	 error('Unsupported non linearity type')
+      end
+   end
+end
+
+function modelLSTM:registerStructure(hyperParams, nLayers, minSize, maxSize)
+   local minSize = minSize or 32
+   local maxSize = maxSize or 4096
+   for l = 1,nLayers do
+    hyperParams:registerParameter("layer_" .. l, 'int', {minSize, maxSize});
+  end
+end
 
 function modelLSTM:extractStructure(hyperParams, structure)
   structure.layers = {};
   for l = 1,structure.nLayers do
     structure.layers[l] = hyperParams:getCurrentParameter("layer_" .. l);
-    -- structure.convSize[l] = hyperParams:getCurrentParameter("conv_" .. l);
-    -- structure.kernelWidth[l] = hyperParams:getCurrentParameter("kernel_" .. l);
-    -- structure.poolSize[l] = hyperParams:getCurrentParameter("pool_" .. l);
   end
   return structure
 end

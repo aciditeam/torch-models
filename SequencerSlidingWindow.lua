@@ -62,6 +62,7 @@ end
 
 function SequencerSlidingWindow:updateGradInput(input, gradOutput)
    error('Not correctly implemented yet!')
+
    local slicesNum = input:size(self.tDim)
    self.gradInput:resizeAs(input):zero()
    for i=1,#gradOutput do 
@@ -75,3 +76,25 @@ function SequencerSlidingWindow:updateGradInput(input, gradOutput)
    end
    return self.gradInput
 end
+
+local M = {}
+
+-- Register parameters to a hyper-parameters structure for optimization  
+function M.registerParameters(hyperParams, maxSize, maxStep)
+   local maxSize = maxSize or 32
+   local maxStep = maxStep or 32
+   
+   hyperParams:registerParameter('slidingWindow', 'bool');
+   hyperParams:registerParameter('slidingWindowSize', 'int', {1, maxSize});
+   hyperParams:registerParameter('slidingWindowStep', 'int', {1, maxStep});
+end
+
+function M.getParameters(hyperParams)
+   local parameters = {}
+   parameters.useSlidingWindow = hyperParams:getCurrentParameter(slidingWindow)
+   parameters.slidingWindowSize = hyperParams:getCurrentParameter(slidingWindowSize)
+   parameters.slidingWindowStep = hyperParams:getCurrentParameter(slidingWindowStep)
+   return parameters
+end
+
+return M

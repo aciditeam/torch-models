@@ -492,9 +492,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function unsupervisedTrain(model, trainData, epoch, options)
-   -- epoch tracker
-   local epoch = epoch or 1
+function unsupervisedTrain(model, trainData, options)
    -- time variable
    local time = sys.clock()
 
@@ -504,9 +502,6 @@ function unsupervisedTrain(model, trainData, epoch, options)
    -- set model to training mode (for modules that differ in training and testing, like Dropout)
    model:training();
    
-   -- do one epoch
-   print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
-
    for inputs, targets in minibatchIterator(trainData, options) do
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
