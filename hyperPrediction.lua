@@ -80,6 +80,7 @@ local saveFolder = locals.paths.timeSeriesResults
 
 cmd = torch.CmdLine()
 cmd:option('--useCuda', false, 'whether to enable CUDA processing')
+cmd:option('--fastRun', false, 'whether to perform a test on very limited models')
 
 -- TODO
 -- cmd:option('--saturateEpoch', 800, 'epoch at which linear decayed LR will reach minLR')
@@ -92,6 +93,13 @@ cmd:option('--useCuda', false, 'whether to enable CUDA processing')
 cmd_params = cmd:parse(arg)
 
 local options = ts_init.get_options(cmd_params.useCuda)
+
+local function append(appTable, mainTable)
+   for k, v in pairs(appTable) do
+      mainTable[k] = appTable[k]
+   end
+end
+append(cmd_params, options)
 
 -- RNN-library's batch conventions
 options.tDim = 1
@@ -185,16 +193,15 @@ local filenamesSets = import_dataset.import_sets_filenames(msds.subset.path,
 							   msds.subset.sets,
 							   filter_suffix)
 
-
 local auxiliary_sets = {'VALID', 'TEST'}
 
 options['VALID'] = {}; options['TEST'] = {}   
 
 options['VALID'].subSize = #filenamesSets['VALID']
-options['VALID'].subSize = 300  -- Comment this out to use full validation set 
+--options['VALID'].subSize = 300  -- Comment this out to use full validation set 
 
 options['TEST'].subSize = #filenamesSets['TEST']
-options['TEST'].subSize = 300  -- Comment this out to use full validation set 
+--options['TEST'].subSize = 300  -- Comment this out to use full validation set 
 
 local function subrange(elems, start_idx, end_idx)
    local sub_elems = {}
@@ -207,6 +214,7 @@ end
 local auxiliaryData = {}
 for _, setType in pairs(auxiliary_sets) do
    local filenames = filenamesSets[setType]
+   print(#filenames)
 
    if options[setType].subSize < #filenames then
       print('WARNING! Not using full ' .. setType:lower() ..' set!')
@@ -344,17 +352,17 @@ for k, v in ipairs(models) do
 	 -- Reinitialize hyperparameter optimization
 	 hyperParams:unregisterAll();
 	 -- Add the structure as requiring optimization
-	 -- local minSize = 32
-	 -- local maxSize = 128
-	 -- print('WAAAAAAAARNING, USING SUPER SMALL LAYERS')
+	 local minSize, maxSize
+	 if options.fastRun then
+	    print('WAAAAAAAARNING, USING SUPER SMALL LAYERS')
+	    minSize = 32
+	    maxSize = 128
+	    print('WAAAAAAAARNING, USING SUPER SMALL MEMORY')
+	 end
+
 	 curModel:registerStructure(hyperParams, nbLayers, minSize, maxSize);
 	 -- Register model-specific options (e.g. non-linarity used)
-	 local fastTest = false
-	 -- fastTest = true
-	 -- if fastTest then
-	 --    print('WAAAAAAAARNING, USING SUPER SMALL MEMORY')
-	 -- end
-	 curModel:registerOptions(hyperParams, fastTest)
+	 curModel:registerOptions(hyperParams, options.fastRun)
 	 -- Initialize hyperparameters structure
 	 hyperParams:initStructure(nbNetworks, #setList, nbRepeat, nbSteps, nbBatch);
 
