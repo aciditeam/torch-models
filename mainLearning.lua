@@ -227,6 +227,7 @@ local function minibatchIterator(dataTable, options)
    
    local data = dataTable.data
    local targets = dataTable.targets
+   
    if options.predict then
       local predictionSelector =  nn.Sequential():add(
 	 nn.SeqReverseSequence(options.tDim)):add(
@@ -571,9 +572,7 @@ function unsupervisedTrain(model, trainData, options)
          _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
 	 -- TODO: check the /, changed to this from a *, maybe wrong
 	 local bSize = inputs:size(options.batchDim)
-	 print(err)
 	 err = err + fs[1] / bSize -- so that err is indep of batch size
-	 print(err)
       end
       -- TODO
       -- TODO

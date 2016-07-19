@@ -165,8 +165,9 @@ function hyperParameters:outputResults(fID)
    for n = 1,self.nbEvaluated do
       for k,v in pairs(self.parameters) do
 	 -- output parameter value
-	 if isComp(self.type[k])    then printf(fID, '%f\t', self.past[k][n])
-	 elseif isCat(self.type[k]) then printf(fID, '%d\t', self.range[k][self.past[k][n]])
+	 if (self.type[k] == 'real') then printf(fID, '%f\t', self.past[k][n])
+	 elseif (self.type[k] == 'int' or self.type[k] == 'catInt') then printf(fID, '%d\t', self.past[k][n])
+	 elseif isCat(self.type[k]) then printf(fID, '%s\t', tostring(self.range[k][self.past[k][n]]))
 	 end
       end
       printf(fID, '%d\t', self.isFitted[n])
@@ -357,8 +358,9 @@ function hyperParameters:fit(nbRandom, nbBatch)
    _, bestIDs = torch.sort(kernel.f)
    -- Prepare the next batch
    print('- Selecting best hyper-parameters.')
-   -- self.nextBatch = finalGrid[{{bestIDs[{{1,nbBatch}}]}, {}}]
-   self.nextBatch = finalGrid:index(1, bestIDs[{{1,nbBatch}}])
+   self.nextBatch = finalGrid[{{bestIDs[{{1,nbBatch}}]}, {}}]
+   -- print(bestIDs[{{1,nbBatch}}])
+   -- self.nextBatch = finalGrid:index(1, bestIDs[{{1,nbBatch}}]:long())
 end
 
 ----------------------------------------------

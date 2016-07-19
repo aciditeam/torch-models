@@ -87,6 +87,11 @@ end
 
 local modelLSTM, parent = torch.class('modelLSTM', 'modelClass')
 
+function modelLSTM:__init()
+   self:parametersDefault()
+   self:parametersRandom()
+end
+
 function modelLSTM:defineModel(structure, options)
    -- Container
    local model = nn.Sequential()
@@ -152,8 +157,7 @@ function modelLSTM:defineModel(structure, options)
    local predictionSelector =  nn.Sequential():add(
       nn.SeqReverseSequence(options.tDim)):add(
       nn.Narrow(options.tDim, 1, options.predictionLength)):add(
-      nn.SeqReverseSequence(options.tDim)):add(
-      nn.Unsqueeze(1))
+      nn.SeqReverseSequence(options.tDim))
    model:add(predictionSelector)
    
    return model
@@ -285,6 +289,7 @@ end
 
 function modelLSTM:parametersRandom()
    -- All possible non-linearities
+   self.distributions = {}
    self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU}
    self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse}
 end
@@ -319,20 +324,20 @@ Learning:
 function modelLSTM:registerOptions(hyperParams)
    hyperParams:registerParameter('rho', 'int', {1, 8})
    hyperParams:registerParameter('dropout', 'real', {0, 0.8})
-   -- hyperParams:registerParameter('layerwiseLinear', 'bool')
+   hyperParams:registerParameter('layerwiseLinear', 'bool')
    hyperParams:registerParameter('batchNormalize', 'bool')
    hyperParams:registerParameter('nonLinearity', 'catFun',
-				 {nn.ReLU})--, nn.Identity, nn.HardTanh})
+				 self.distributions.nonLinearity)
+   hyperParams:registerParameter('initializer', 'catFun',
+				 self.distributions.initialize)
 end
 
 -- Register non layer-specific parameters
 function modelLSTM:updateOptions(hyperParams, optimizeBatchNormalize)
    self.rho = hyperParams:getCurrentParameter('rho');
-   -- self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
-   if optimizeBatchNormalize then
-      self.batchNormalize = hyperParams:getCurrentParameter(
-	 'batchNormalize')
-   end
+   self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
+   self.batchNormalize = hyperParams:getCurrentParameter(
+      'batchNormalize')
    self.nonLinearity = hyperParams:getCurrentParameter('nonLinearity')
    
    self.dropout = hyperParams:getCurrentParameter('dropout')

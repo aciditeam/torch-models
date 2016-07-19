@@ -125,13 +125,6 @@ options.maxValidIncreasedEpochs = 5
 -- Training parameters
 options.batchSize = 64;
 
--- Not all the dataset is loaded into memory in a single pass,
--- we perform a sliding window over it, load a subset, perform
--- some iterations of the optimisation process, then slide the window
-options.datasetWindowSize = 128
-options.datasetMaxEpochs = 30
-options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2) 
-
 ---------------------------------------
 -- Length of predictions to perform
 ---------------------------------------
@@ -235,7 +228,6 @@ for _, setType in pairs(auxiliary_sets) do
    -- Validation set as a tensor
    auxiliaryData[setType] = import_dataset.load_slice_filenames_tensor(
       filenames_sub, f_load, options)
-   auxiliaryData[setType]['targets'] = selectPrediction(auxiliaryData[setType]['targets'], options)
 end
 
 local validData = auxiliaryData['VALID']
@@ -282,8 +274,11 @@ models = {modelLSTM};
 
 -- Threshold for F0 measure:
 local accCriterion_threshold = 0.2
-criterions = {nn.MSECriterion, nn.DistKLDivCriterion,
+criterions = {nn.DistKLDivCriterion,
+	      nn.MSECriterion,
 	      function () return nn.binaryAccCriterion(accCriterion_threshold) end}
+
+print('WARNING must be careful to correcty store results for different criterions')
 
 -- Sampler to use
 local hyperSample = hyperSampler()
@@ -307,6 +302,14 @@ local nbBatch = 10
 local nbNetworks = nbSteps * nbBatch
 local nbRandom = 100000;
 
+
+local testing = false
+if testing then
+   print('WOOOOOOOOOOOOOW, mega hard training dude')
+   nbSteps = 1
+   nbBatch = 1
+end
+
 -- Iterate over all models that we want to test
 for k, v in ipairs(models) do   
    print('Start loop on models')
@@ -328,6 +331,9 @@ for k, v in ipairs(models) do
       print('Current criterion: ' .. shortCriterionName)
       criterion = nn.SequencerCriterion(criterion)
       if options.cuda then criterion:cuda() end
+
+      local mainSaveLocation = savePrefix .. '-' .. shortModelName .. '-' ..
+	 shortCriterionName
       
       -- Loop over number of layers
       for nbLayers = 3,8 do
@@ -370,7 +376,7 @@ for k, v in ipairs(models) do
 	 curModel:registerOptions(hyperParams, options.fastRun)
 	 -- Initialize hyperparameters structure
 	 hyperParams:initStructure(nbNetworks, #setList, nbRepeat, nbSteps, nbBatch);
-
+	 
 	 -- Optimization step
 	 for step = 1,nbSteps do
 	    -- Local pasts values
@@ -393,6 +399,10 @@ for k, v in ipairs(models) do
 		     curModel:updateOptions(hyperParams)
 		     -- Define a new model
 		     model = curModel:defineModel(structure, options);
+		     		     
+		     -- Activate CUDA on the model
+		     if options.cuda then model:cuda(); end
+
 		     model = curModel:weightsInitialize(model)
 		     print(model)
 		     hyperParams:printCurrent()
@@ -413,9 +423,6 @@ for k, v in ipairs(models) do
 		     -- Set of trained layers
 		     trainedLayers = {};
 		     
-		     local mainSaveLocation = savePrefix .. shortModelName ..
-			shortCriterionName
-		     
 		     -----------------------------------------------------------
 		     -- DISABLED: No loop on layers, uses batch-normalize --
 		     -----------------------------------------------------------
@@ -429,9 +436,6 @@ for k, v in ipairs(models) do
 		     -- local model = curModel:definePretraining(structure, l, options);
 
 		     local saveLocation = layerSaveLocation or mainSaveLocation .. '.net'
-		     
-		     -- Activate CUDA on the model
-		     if options.cuda then model:cuda(); end
 		     -- If classical learning configure the optimizer
 		     -- TODO
 		     -- if (not options.adaptiveLearning) then 
@@ -458,13 +462,17 @@ for k, v in ipairs(models) do
 			local validationPrinter = getValidationPrinter(model, validData,
 								       options)
 			
+			if testing then
+			   print('WOOOOOW, hardcore testing m8')
+			   break
+			end
+
 			print('Start loop on dataset windows')
 			-- Perform sliding window over the training dataset (too large to fit in memory)
 			for slice, file_position in import_dataset.get_sliding_window_iterator(
 			   filenamesTrain, f_load, options) do
 			   xlua.progress(file_position, numFilenamesTrain)
-			   print('Last loaded file, number: ' .. file_position)
-
+			   
 			   validationPrinter(file_position)
 			   
 			   local trainData = {}
@@ -475,10 +483,6 @@ for k, v in ipairs(models) do
 			      local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 			      trainData[dataType] = smallSlidingWindowBatch
 			   end
-
-			   trainData.targets = selectPrediction(trainData.targets, options)
-			   print(trainData.data:size())
-			   print(trainData.targets:size())
 			   
 			   if (not options.adaptiveLearning) then
 			      if torch.type(trainData.data) ~= 'table' then
@@ -549,9 +553,11 @@ for k, v in ipairs(models) do
 			end
 		     end
 
-		     -- Retrieve best training iteration for the current model
-		     model = torch.load(saveLocation);
-		     os.remove(saveLocation)  -- clean saved networks
+		     if not testing then
+			-- Retrieve best training iteration for the current model
+			model = torch.load(saveLocation);
+			os.remove(saveLocation)  -- clean saved networks
+		     end
 
 		     -- Evaluate test error
 		     
@@ -559,7 +565,7 @@ for k, v in ipairs(models) do
 		     -- r = number of repetitions (because random draws, keep best)
 		     -- r could be set to one for a quick run
 		     -- errorRates is then a 1x1 Tensor
-		     errorRates[{set, r}] = supervisedTest(classModel, tmpData, options)
+		     errorRates[{set, r}] = unsupervisedTest(model, testData, options)
 		     
 		     -- Remove garbage
 		     collectgarbage();
@@ -573,7 +579,7 @@ for k, v in ipairs(models) do
 	    -- Find the next values of parameters to evaluate
 	    hyperParams:fit(nbRandom, nbBatch);
 	    -- Save the current state of optimization (only errors and structures)
-	    fID = assert(io.open(saveFolder .. "optimize_" .. nbLayers .. ".txt", "w"));
+	    fID = assert(io.open(mainSaveLocation .. "-optimize_" .. nbLayers .. ".txt", "w"));
 	    hyperParams:outputResults(fID);
 	    fID:close();
 	 end  -- step

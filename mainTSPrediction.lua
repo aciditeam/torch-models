@@ -191,7 +191,7 @@ local function subrange(elems, start_idx, end_idx)
 end
 
 options.validSubSize = #filenamesValid
-options.validSubSize = 300  -- Comment this to use full validation set 
+options.validSubSize = 100 -- Comment this to use full validation set 
 
 if options.validSubSize < #filenamesValid then
    print('WARNING! Not using full validation set!')
