@@ -136,24 +136,34 @@ options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2)
 -- Length of predictions to perform
 ---------------------------------------
 options.predict = true
-options.predictionLength = 1 
+options.predictionLength = 1
+
+if options.predictionLength ~= 1 then
+   error("Support for prediction length ~= 1 not yet implemented." ..
+	    'Best would be to slice target predictions within the networks.')
+end
 
 -- Initialize a sliding window depending on hyperparameters
 local function getSlidingWindow(hyperParams)
    local function batchSlidingWindow(x) return x end
 
    local parameters = moduleSequencerSlidingWindow.getParameters(hyperParams)
-   if parameters.slidingWindow then
-      -- Smaller-sized sliding window over a batch of long examples
-      local slidingWindow = nn.SequencerSlidingWindow(1, parameters.slidingWindowSize,
-						      parameters.slidingWindowStep)
-      batchSlidingWindow = function(minibatch)
-	 return slidingWindow:forward(minibatch)
-      end
+   -- Smaller-sized sliding window over a batch of long examples
+   local slidingWindow = nn.SequencerSlidingWindow(
+      1, parameters.slidingWindowSize, parameters.slidingWindowStep)
+   batchSlidingWindow = function(minibatch)
+      return slidingWindow:forward(minibatch)
    end
    return batchSlidingWindow
 end
 
+-- Extract only actual predictions from a batch of examples
+-- Sequence loader returns targets as simply offset versions of their data
+-- counterpart, this extracts the predictionLength tail of those sequences
+local function selectPrediction(batch, options)
+   local sliceSize = batch:size(options.tDim)
+   return batch:narrow(1, sliceSize-options.predictionLength+1, options.predictionLength)
+end
 
 -- Debug and printing parameters
 -- Print current validation every ... analyzed files
@@ -225,6 +235,7 @@ for _, setType in pairs(auxiliary_sets) do
    -- Validation set as a tensor
    auxiliaryData[setType] = import_dataset.load_slice_filenames_tensor(
       filenames_sub, f_load, options)
+   auxiliaryData[setType]['targets'] = selectPrediction(auxiliaryData[setType]['targets'], options)
 end
 
 local validData = auxiliaryData['VALID']
@@ -279,9 +290,6 @@ local hyperSample = hyperSampler()
 -- Parameters handling
 local hyperParams = hyperParameters(hyperSample)
 
--- Register external parameters for sliding window
-moduleSequencerSlidingWindow.registerParameters(hyperParams)
-
 ----------------------------------------------------------------------
 -- Experiment definition code
 ----------------------------------------------------------------------
@@ -319,6 +327,7 @@ for k, v in ipairs(models) do
       
       print('Current criterion: ' .. shortCriterionName)
       criterion = nn.SequencerCriterion(criterion)
+      if options.cuda then criterion:cuda() end
       
       -- Loop over number of layers
       for nbLayers = 3,8 do
@@ -341,14 +350,6 @@ for k, v in ipairs(models) do
 	 -- structure.poolSize = {2, 2, 2};
 	 -- structure.nClassLayers = 3;
 	 
-	 -- TODO
-	 -- TODO
-	 -- Here we should start by
-	 --   * Random structure optimization
-	 --   * (Partly pre-trained ?)
-	 -- TODO
-	 -- TODO
-
 	 -- Reinitialize hyperparameter optimization
 	 hyperParams:unregisterAll();
 	 -- Add the structure as requiring optimization
@@ -359,6 +360,10 @@ for k, v in ipairs(models) do
 	    maxSize = 128
 	    print('WAAAAAAAARNING, USING SUPER SMALL MEMORY')
 	 end
+
+
+	 -- Register external parameters for sliding window
+	 moduleSequencerSlidingWindow.registerParameters(hyperParams)
 
 	 curModel:registerStructure(hyperParams, nbLayers, minSize, maxSize);
 	 -- Register model-specific options (e.g. non-linarity used)
@@ -388,7 +393,9 @@ for k, v in ipairs(models) do
 		     curModel:updateOptions(hyperParams)
 		     -- Define a new model
 		     model = curModel:defineModel(structure, options);
+		     model = curModel:weightsInitialize(model)
 		     print(model)
+		     hyperParams:printCurrent()
 		     ----------------------------------------------------------------------
 		     -- Prediction training code
 		     ----------------------------------------------------------------------
@@ -435,6 +442,7 @@ for k, v in ipairs(models) do
 		     -- 	 end
 		     -- end
 
+
 		     local batchSlidingWindow = getSlidingWindow(hyperParams)
 		     
 		     -- Keep track of best validation error
@@ -460,26 +468,23 @@ for k, v in ipairs(models) do
 			   validationPrinter(file_position)
 			   
 			   local trainData = {}
-			   -- Take a random subset of examples and slice them into
-			   -- small training examples with size options.slidingWindowSize
+			   -- Slice examples them into small training examples with size
+			   -- options.slidingWindowSize
 			   for dataType, dataSubset in pairs(slice) do
 			      -- Iterate over inputs and targets
 			      local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 			      trainData[dataType] = smallSlidingWindowBatch
 			   end
-			   
-			   if options.cuda then
-			      for dataType, _ in pairs(slice) do
-				 -- Iterate over inputs and targets
-				 trainData[dataType]:cuda()
-			      end
-			   end
+
+			   trainData.targets = selectPrediction(trainData.targets, options)
+			   print(trainData.data:size())
+			   print(trainData.targets:size())
 			   
 			   if (not options.adaptiveLearning) then
 			      if torch.type(trainData.data) ~= 'table' then
-				 configureOptimizer(options, trainData.data:size(options.batchDim))
+			   	 configureOptimizer(options, trainData.data:size(options.batchDim))
 			      else
-				 configureOptimizer(options, #trainData.data);
+			   	 configureOptimizer(options, #trainData.data);
 			      end
 			   end
 
@@ -546,6 +551,7 @@ for k, v in ipairs(models) do
 
 		     -- Retrieve best training iteration for the current model
 		     model = torch.load(saveLocation);
+		     os.remove(saveLocation)  -- clean saved networks
 
 		     -- Evaluate test error
 		     

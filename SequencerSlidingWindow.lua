@@ -85,15 +85,17 @@ function M.registerParameters(hyperParams, maxSize, maxStep)
    local maxStep = maxStep or 32
    
    hyperParams:registerParameter('slidingWindow', 'bool');
-   hyperParams:registerParameter('slidingWindowSize', 'int', {1, maxSize});
-   hyperParams:registerParameter('slidingWindowStep', 'int', {1, maxStep});
+   hyperParams:registerParameter('slidingWindowSize', 'int', {8, maxSize});
+   hyperParams:registerParameter('slidingWindowStep', 'int', {8, maxStep});
 end
 
 function M.getParameters(hyperParams)
    local parameters = {}
-   parameters.useSlidingWindow = hyperParams:getCurrentParameter(slidingWindow)
-   parameters.slidingWindowSize = hyperParams:getCurrentParameter(slidingWindowSize)
-   parameters.slidingWindowStep = hyperParams:getCurrentParameter(slidingWindowStep)
+   parameters.useSlidingWindow = hyperParams:getCurrentParameter('slidingWindow')
+   parameters.slidingWindowSize = hyperParams:getCurrentParameter('slidingWindowSize')
+   parameters.slidingWindowStep = math.min(
+      parameters.slidingWindowSize,
+      hyperParams:getCurrentParameter('slidingWindowStep'))
    return parameters
 end
 

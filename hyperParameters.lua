@@ -20,7 +20,7 @@ require 'importTSDataset'
 local hyperParameters = torch.class("hyperParameters")
 
 local compTypes = {'int', 'real'}
-local catTypes = {'catInt', 'catStr', 'bool'}
+local catTypes = {'catInt', 'catStr', 'catFun', 'bool'}
 
 local function belongs(elem, set)
    for _, elem_b in pairs(set) do
@@ -152,7 +152,7 @@ function hyperParameters:outputResults(fID)
    -- Simplification function
    printf = function(f, s, ...) return f:write(s:format(...)) end -- function
    -- output parameter names
-   for k,v in pairs (self.parameters) do
+   for k,v in pairs(self.parameters) do
       printf(fID, '%s\t', k)
    end
    printf(fID, 'Fitted\t')
@@ -175,6 +175,17 @@ function hyperParameters:outputResults(fID)
 	 printf(fID, '%f\t', self.errorMeans[n][d])
       end
       printf(fID, '\n')
+   end
+end
+
+function hyperParameters:printCurrent()
+   local function printer(k)
+      local param = self:getCurrentParameter(k)
+      print('Key: ' .. k .. ', value: ')
+      print(param)
+   end
+   for k,_ in pairs(self.parameters) do
+      printer(k)
    end
 end
 

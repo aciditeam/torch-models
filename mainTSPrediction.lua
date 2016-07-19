@@ -126,8 +126,11 @@ options.slidingWindow = true
 options.slidingWindowSize = 32;
 options.slidingWindowStep = 16;
 
--- Train to predict next steps
+---------------------------------------
+-- Length of predictions to perform
+---------------------------------------
 options.predict = true
+options.predictionLength = 1 
 
 -- Initialize a sliding window depending on a set of options
 local function getSlidingWindow(hyperParams)
@@ -286,6 +289,9 @@ for k, v in ipairs(models) do
       print('Current criterion: ' .. shortCriterionName)
       
       criterion = nn.SequencerCriterion(criterion)
+      if options.cuda then
+	 criterion:cuda()
+      end
       
       -- Flatten all trainable parameters into a 1-dim vector
       if model then
@@ -360,6 +366,7 @@ for k, v in ipairs(models) do
 	    -- small training examples with size options.slidingWindowSize
 	    for dataType, dataSubset in pairs(slice) do
 	       -- Iterate over inputs and targets
+	       print(dataType)
 	       local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 	       trainData[dataType] = smallSlidingWindowBatch
 	    end
@@ -404,7 +411,7 @@ for k, v in ipairs(models) do
 	    --[[ Unsupervised pre-training ]]--
 	    -- Perform unsupervised training of the model
 	    -- err = curModel:
-	    err = unsupervisedTrain(model, trainData, datasetEpoch, options);
+	    err = unsupervisedTrain(model, trainData, options);
 	    print("Reconstruction error (train) : " .. err);
 	    
 	    -- Collect the garbage

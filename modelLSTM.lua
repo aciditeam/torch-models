@@ -150,7 +150,9 @@ function modelLSTM:defineModel(structure, options)
 
    -- Select only actual predictions to concentrate error computation on those
    local predictionSelector =  nn.Sequential():add(
-      nn.Select(options.tDim, options.sliceSize-(options.predictionLength-1))):add(
+      nn.SeqReverseSequence(options.tDim)):add(
+      nn.Narrow(options.tDim, 1, options.predictionLength)):add(
+      nn.SeqReverseSequence(options.tDim)):add(
       nn.Unsqueeze(1))
    model:add(predictionSelector)
    
@@ -301,49 +303,39 @@ Topology:
 
 Model:
   * rho
-  _ layerwiseLinear (boolean)
-  _ batchNormalize (boolean)
-  _ addNonLinearity (boolean)
-  _ nonLinearity (categorical (non linearities, e.g. ReLU))
+  * layerwiseLinear (boolean)
+  * batchNormalize (boolean)
+  X addNonLinearity (boolean)
+  * nonLinearity (categorical (non linearities, e.g. ReLU))
   _ dropout (real, [0, 1])
 
 Learning:
   _ optimizationAlgorithm (categorical)
   _ learningRate (real)
-  (+ algorithm-specific ?) 
+  (+ algorithm-specific ?)
 --]]
 
 -- Register non layer-specific parameters
-function modelLSTM:registerOptions(hyperParams, fastTest)
-   if not fastTest then
-      hyperParams:registerParameter('rho', 'int', {1, 32});
-   else
-      hyperParams:registerParameter('rho', 'int', {1, 5});
-   end
-   hyperParams:registerParameter('layerwiseLinear', 'bool')
+function modelLSTM:registerOptions(hyperParams)
+   hyperParams:registerParameter('rho', 'int', {1, 8})
+   hyperParams:registerParameter('dropout', 'real', {0, 0.8})
+   -- hyperParams:registerParameter('layerwiseLinear', 'bool')
    hyperParams:registerParameter('batchNormalize', 'bool')
-   hyperParams:registerParameter('addNonLinearity', 'bool')
-   hyperParams:registerParameter('nonLinearity', 'catStr', {'relu', 'tanh'})
+   hyperParams:registerParameter('nonLinearity', 'catFun',
+				 {nn.ReLU})--, nn.Identity, nn.HardTanh})
 end
 
 -- Register non layer-specific parameters
-function modelLSTM:updateOptions(hyperParams)
+function modelLSTM:updateOptions(hyperParams, optimizeBatchNormalize)
    self.rho = hyperParams:getCurrentParameter('rho');
-   self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
-   self.batchNormalize = hyperParams:getCurrentParameter('batchNormalize')
-   self.addNonLinearity = hyperParams:getCurrentParameter('addNonLinearity')
-
-   if self.addNonLinearity then
-      local nonLinearity_string = hyperParams:getCurrentParameter('nonLinearity')
-      print(nonLinearity_string)
-      if nonLinearity_string == 'relu' then
-	 self.nonLinearity = nn.ReLU
-      elseif nonLinearity_string == 'tanh' then
-	 self.nonLinearity = nn.Tanh
-      else
-	 error('Unsupported non linearity type')
-      end
+   -- self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
+   if optimizeBatchNormalize then
+      self.batchNormalize = hyperParams:getCurrentParameter(
+	 'batchNormalize')
    end
+   self.nonLinearity = hyperParams:getCurrentParameter('nonLinearity')
+   
+   self.dropout = hyperParams:getCurrentParameter('dropout')
 end
 
 function modelLSTM:registerStructure(hyperParams, nLayers, minSize, maxSize)

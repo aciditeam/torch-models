@@ -213,74 +213,85 @@ end
 ----------------------------------------------------------------------
 
 -- Pre-allocate some memory for a mini batch
-local function allocate_batch(data, batchSize, options)
-   local batch = torch.Tensor(data:size(options.tDim), batchSize,
-			      data:size(options.featsDim))
-   
+local function allocate_batch(sizes, batchSize, options)
+   local batch = torch.Tensor(sizes[options.tDim], batchSize,
+			      sizes[options.featsDim])
+   if options.cuda then batch:cuda() end
    return batch
 end
 
 -- Iterate through a batch of training examples and targets using mini-batches
-local function minibatchIterator(trainData, options)
+local function minibatchIterator(dataTable, options)
    -- shuffle order at each epoch
-   local shuffle = torch.randperm(trainData.data:size(options.batchDim));
+   local shuffle = torch.randperm(dataTable.data:size(options.batchDim));
    
+   local data = dataTable.data
+   local targets = dataTable.targets
+   if options.predict then
+      local predictionSelector =  nn.Sequential():add(
+	 nn.SeqReverseSequence(options.tDim)):add(
+	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
+	 nn.SeqReverseSequence(options.tDim))
+      
+      targets = predictionSelector:forward(targets)
+   end
+
    -- Pre-allocate mini batch space
-   local inputs = allocate_batch(trainData['data'],
-				 options.batchSize, options)
-   local targets = allocate_batch(trainData['targets'],
-				  options.batchSize, options)
-   
+   local inputsBatch = allocate_batch(data:size(),
+				      options.batchSize, options)
+   local targetsBatch = allocate_batch(targets:size(),
+				       options.batchSize, options)
+
    local t = 1
-   
+
    return function()
-      if t > trainData.data:size(options.batchDim) then
+      if t > dataTable.data:size(options.batchDim) then
 	 -- All training examples have been used, quit
 	 return nil
       end
       -- disp progress
-      -- xlua.progress(t, trainData.data:size(1))
+      -- xlua.progress(t, dataTable.data:size(1))
 
       -- Check size (for last batch)
       local bSize = math.min(options.batchSize,
-			     trainData.data:size(options.batchDim) - t + 1);
+			     data:size(options.batchDim) - t + 1);
 
       -- Potential batch space memory trimming
       if (bSize ~= options.batchSize) then
 	 -- Grab the opportunity to make some space
-	 inputs = nil; targets = nil; collectgarbage();
-	 
+	 inputsBatch = nil; targetsBatch = nil; collectgarbage();
+
 	 -- Pre-allocate mini batch space
-	 inputs = allocate_batch(trainData['data'], bSize, options)
-	 targets = allocate_batch(trainData['targets'], bSize, options)
-   
+	 inputsBatch = allocate_batch(data:size(), bSize, options)
+	 targetsBatch = allocate_batch(targets:size(), bSize, options)
+
 	 -- Switch data to cuda
 	 if options.cuda then
-	    inputs = inputs:cuda();
-	    targets = targets:cuda();
+	    inputsBatch = inputsBatch:cuda();
+	    targetsBatch = targetsBatch:cuda();
 	 end
       end
 
       local k = 1;
       -- iterate over mini-batch examples
       for i = t, t+bSize-1 do
-         -- select new sample
-	 selectedInput = trainData.data:select(options.batchDim, shuffle[i])
+	 -- select new sample
+	 selectedInput = data:select(options.batchDim, shuffle[i])
 	 -- store new sample
-	 inputs:select(options.batchDim, k):copy(selectedInput)
-         k = k + 1
+	 inputsBatch:select(options.batchDim, k):copy(selectedInput)
+	 k = k + 1
       end
-      
+
       -- Initialize targets
       if options.predict then
 	 -- Train model to predict subsequent input steps
 	 local k = 1;
 	 for i = t, t+bSize-1 do
 	    -- select new sample
-	    selectedTarget = trainData.targets:select(options.batchDim,
-						      shuffle[i])
+	    selectedTarget = targets:select(options.batchDim,
+					    shuffle[i])
 	    -- store new sample
-	    targets:select(options.batchDim, k):copy(selectedTarget)
+	    targetsBatch:select(options.batchDim, k):copy(selectedTarget)
 	    k = k + 1
 	 end
       elseif options.inpainting then
@@ -290,12 +301,16 @@ local function minibatchIterator(trainData, options)
       else
 	 error('Unhandled case')
       end
-      
-      if options.cuda then inputs = inputs:cuda(); targets = targets:cuda() end
 
       t = t+options.batchSize
+
+      -- Switch data to cuda
+      if options.cuda then
+	 inputsBatch = inputsBatch:cuda();
+	 targetsBatch = targetsBatch:cuda();
+      end
       
-      return inputs, targets
+      return inputsBatch, targetsBatch
    end
 end
 
@@ -334,7 +349,7 @@ function supervisedTrain(model, trainData, options)
    shuffle = torch.randperm(trainData.data:size(options.batchDim));
    
    -- Pre-allocate mini batch space
-   local inputs = allocate_batch(trainData, bSize, options)
+   local inputs = allocate_batch(trainData:size(), bSize, options)
    local targets = torch.zeros(options.batchSize);
 
    -- Switch data to cuda
@@ -353,7 +368,7 @@ function supervisedTrain(model, trainData, options)
 
 	 -- Re-allocate mini batch space
 	 inputs = allocate_batch(trainData, bSize, options)
-   
+	 
 	 -- Initialize targets
 	 targets = torch.zeros(bSize);
 	 
@@ -515,7 +530,7 @@ function unsupervisedTrain(model, trainData, options)
 	 local f = 0
 	 -- [[ Evaluate function for a complete mini-batch at once ]] --
 	 -- estimate forward pass
-	 
+
 	 local output = model:forward(inputs)
 	 -- estimate classification (compare to target)
 	 local err = criterion:forward(output, targets)
@@ -556,7 +571,9 @@ function unsupervisedTrain(model, trainData, options)
          _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
 	 -- TODO: check the /, changed to this from a *, maybe wrong
 	 local bSize = inputs:size(options.batchDim)
+	 print(err)
 	 err = err + fs[1] / bSize -- so that err is indep of batch size
+	 print(err)
       end
       -- TODO
       -- TODO

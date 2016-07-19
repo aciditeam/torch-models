@@ -710,7 +710,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
    local example = f_load(filenames[1])  -- get an example in the batch
    local featSize = example:size(2)  -- dimension of the time-series
    local slicedData = torch.zeros(sliceSize, 1, featSize)
-   local slicedTargets = torch.zeros(predictionLength, 1, featSize)
+   local slicedTargets = torch.zeros(sliceSize, 1, featSize)
    local slicesNumbers = torch.zeros(#filenames)
    
    -- Slice input sequence into equal sized windows
@@ -752,15 +752,10 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
       local slices = sliceSequence(sequence)
       slicesNumbers[sequence_i] = slices:size(options.batchDim)
       
-      -- TODO: can maybe improve this, could replace added zeros (necessary
-      -- to ensure same number of slices for original sequence and targets)
-      -- by values from the actual original sequence
       local offsetSequence = sequence:narrow(1, 1+predictionLength,
 					     sequenceDuration-predictionLength):
 	 cat(torch.zeros(predictionLength, featSize), 1)
-      -- Only extract actual next steps, don't recopy steps from the data
-      local targetSlices = sliceSequence(offsetSequence):
-	 narrow(1, sliceSize-(predictionLength-1), predictionLength)
+      local targetSlices = sliceSequence(offsetSequence)
       
       slicedData = slicedData:cat(slices, options.batchDim)
       slicedTargets = slicedTargets:cat(targetSlices, options.batchDim)
