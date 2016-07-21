@@ -153,12 +153,14 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs))
    end
 
-   -- Select only actual predictions to concentrate error computation on those
-   local predictionSelector =  nn.Sequential():add(
-      nn.SeqReverseSequence(options.tDim)):add(
-      nn.Narrow(options.tDim, 1, options.predictionLength)):add(
-      nn.SeqReverseSequence(options.tDim))
-   model:add(predictionSelector)
+   if options.predict then
+      -- Select only actual predictions to concentrate error computation on those
+      local predictionSelector =  nn.Sequential():add(
+	 nn.SeqReverseSequence(options.tDim)):add(
+	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
+	 nn.SeqReverseSequence(options.tDim))
+      model:add(predictionSelector)
+   end
    
    return model
 end
@@ -290,7 +292,10 @@ end
 function modelLSTM:parametersRandom()
    -- All possible non-linearities
    self.distributions = {}
-   self.distributions.nonLinearity = {nn.HardTanh, nn.HardShrink, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU}
+   self.distributions.nonLinearity = {nn.HardTanh, nn.SoftShrink, nn.SoftMax, nn.SoftMin, nn.SoftPlus, nn.SoftSign, nn.LogSigmoid, nn.LogSoftMax, nn.Sigmoid, nn.Tanh, nn.ReLU, nn.PReLU, nn.RReLU, nn.ELU, nn.LeakyReLU,
+   -- nn.HardShrink, 
+   }
+   self.distributions.nonLinearityTest = {nn.LeakyReLU}
    self.distributions.initialize = {nninit.normal, nninit.uniform, nninit.xavier, nninit.kaiming, nninit.orthogonal, nninit.sparse}
 end
 
@@ -320,26 +325,70 @@ Learning:
   (+ algorithm-specific ?)
 --]]
 
+-- nn.HardShrink removed from this 
+local nonLinearityNames = {'nn.HardTanh', 'nn.SoftShrink', 'nn.SoftMax', 'nn.SoftMin',
+   'nn.SoftPlus', 'nn.SoftSign', 'nn.LogSigmoid', 'nn.LogSoftMax', 'nn.Sigmoid', 'nn.Tanh', 'nn.ReLU',
+   'nn.PReLU', 'nn.RReLU', 'nn.ELU', 'nn.LeakyReLU'}
+
+-- Simple pattern-matching on the various names of non-linearities
+-- 
+-- Saving names rather than directly functions in the hyper-parameters is required
+-- to be able to preperly retrieve the non-linearity used when outputting the
+-- results.
+local function getNonLinearity(name)
+   if name == 'nn.HardTanh' then return nn.HardTanh 
+   elseif name == 'nn.HardShrink' then return nn.HardShrink 
+   elseif name == 'nn.SoftShrink' then return nn.SoftShrink 
+   elseif name == 'nn.SoftMax' then return nn.SoftMax 
+   elseif name == 'nn.SoftMin' then return nn.SoftMin 
+   elseif name == 'nn.SoftPlus' then return nn.SoftPlus 
+   elseif name == 'nn.SoftSign' then return nn.SoftSign 
+   elseif name == 'nn.LogSigmoid' then return nn.LogSigmoid
+   elseif name == 'nn.LogSoftMax' then return nn.LogSoftMax 
+   elseif name == 'nn.Sigmoid' then return nn.Sigmoid 
+   elseif name == 'nn.Tanh' then return nn.Tanh 
+   elseif name == 'nn.ReLU' then return nn.ReLU
+   elseif name == 'nn.PReLU' then return nn.PReLU 
+   elseif name == 'nn.RReLU' then return nn.RReLU 
+   elseif name == 'nn.ELU' then return nn.ELU
+   elseif name == 'nn.LeakyReLU' then return nn.LeakyReLU
+   else error('Unexpected non-linearity')
+   end
+end
+
+local initializerNames = {'nninit.normal', 'nninit.uniform', 'nninit.xavier', 'nninit.kaiming',
+		      'nninit.orthogonal', 'nninit.sparse'}
+
+local function getInitializer(name)
+   if name == 'nninit.normal' then return nninit.normal 
+   elseif name == 'nninit.uniform' then return nninit.uniform 
+   elseif name == 'nninit.xavier' then return nninit.xavier 
+   elseif name == 'nninit.kaiming' then return nninit.kaiming
+   elseif name == 'nninit.orthogonal' then return nninit.uniform 
+   elseif name == 'nninit.sparse' then return nninit.sparse 
+   else error('Unexpected initializer')
+   end
+end
+
 -- Register non layer-specific parameters
 function modelLSTM:registerOptions(hyperParams)
    hyperParams:registerParameter('rho', 'int', {1, 8})
    hyperParams:registerParameter('dropout', 'real', {0, 0.8})
    hyperParams:registerParameter('layerwiseLinear', 'bool')
    hyperParams:registerParameter('batchNormalize', 'bool')
-   hyperParams:registerParameter('nonLinearity', 'catFun',
-				 self.distributions.nonLinearity)
-   hyperParams:registerParameter('initializer', 'catFun',
-				 self.distributions.initialize)
+   hyperParams:registerParameter('nonLinearity', 'catStr', nonLinearityNames)
+   hyperParams:registerParameter('initializer', 'catStr', initializerNames)
 end
 
 -- Register non layer-specific parameters
 function modelLSTM:updateOptions(hyperParams, optimizeBatchNormalize)
    self.rho = hyperParams:getCurrentParameter('rho');
    self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
-   self.batchNormalize = hyperParams:getCurrentParameter(
-      'batchNormalize')
-   self.nonLinearity = hyperParams:getCurrentParameter('nonLinearity')
-   
+   self.batchNormalize = hyperParams:getCurrentParameter('batchNormalize')
+   self.nonLinearity = getNonLinearity(
+      hyperParams:getCurrentParameter('nonLinearity'))
+   self.initializer = getInitializer(
+      hyperParams:getCurrentParameter('initializer'))
    self.dropout = hyperParams:getCurrentParameter('dropout')
 end
 

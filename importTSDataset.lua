@@ -22,6 +22,8 @@ local nninit = require 'nninit'
 
 local moses = require 'moses'
 
+local iterator = require './slidingIterator.lua'
+
 local M = {}
 
 ----------------------------------------------------------------------
@@ -447,7 +449,10 @@ end
 --  * sets_subfolders, a table of string arrays: the paths to each of the
 --   subsets at stake (training, validation and testing)
 --  * filter_suffix, a string, optional: the suffix of files to keep
-function M.import_sets_filenames(dirData, sets_subfolders, filter_suffix)
+--  * trimPath, a boolean: if set, return filenames in the form
+--   {path1 : {filenames}, path2 : {filenames}, ...}, which reduces redundancy
+--   in the path names.
+function M.import_sets_filenames(dirData, sets_subfolders, filter_suffix, trimPath)
    local filter_suffix = filter_suffix or ''
    
    local sets = {}
@@ -456,12 +461,22 @@ function M.import_sets_filenames(dirData, sets_subfolders, filter_suffix)
       sets[subsetType] = {}
       folders[subsetType] = {}
       for _, path in ipairs(paths) do
+	 if trimPath then
+	    -- Store filenames in a dictionary with foldername as key
+	    -- to avoid redundant storing of the foldername
+	    sets[subsetType][dirData .. path] = {}
+	 end
+
 	 table.insert(folders[subsetType], dirData .. path)
 	 
-	 local filenames_iterator = diriter.dirtree(dirData .. path)
+	 local filenames_iterator = diriter.dirtree(dirData .. path, trimPath)
 	 local filenames_table = diriter.to_array(filter_suffix, filenames_iterator)
 	 for _, filename in ipairs(filenames_table) do
-	    table.insert(sets[subsetType], filename)
+	    if trimPath then
+	       table.insert(sets[subsetType][dirData .. path], filename)
+	    else
+	       table.insert(sets[subsetType], filename)
+	    end
 	 end
       end
    end
@@ -486,114 +501,37 @@ end
 --  * slice_size, an integer: the duration with which to split all the
 --   sequences.
 --  * f_load, a function : filename -> torch.Tensor: load a file
-function M.get_sliding_window_iterator(filenames, f_load, options,
-				       no_overlap)
-   local window_size = options.datasetWindowSize
-   local sliding_step = options.datasetWindowStepSize or
-      math.floor(window_size / 10)
-
-   -- Use this for a non-overlapping sliding window (last step then uses
-   -- a smaller window)
-   local no_overlap = no_overlap or false
-
-   local slice_size = options.sliceSize
-
-   local train_examples_num = #filenames
-   window_size = math.min(window_size, train_examples_num)
-   
-   -- Avoid skipping some examples because of a step too long
-   if sliding_step > window_size then
-      sliding_step = window_size
-   end
-   
-   local function euclidean_division(a, b)
-      local quotient = math.floor(a / b)
-      local remainder = a % b
-      
-      return quotient, remainder
-   end
-   
-   local steps_num, remainder_step = euclidean_division(
-      train_examples_num - window_size, sliding_step)
-
-   local sizes = {}
-   sizes['winSize'] = window_size
-   sizes['stepSize'] = sliding_step
-   sizes['lastStep'] = remainder_step
-   
+function M.get_sliding_window_iterator(filenames, windowSize, windowStep, f_load,
+				       options, verbose)
    -- Shuffle the dataset
    local function shuffleTable(tableIn)
       return sampleFile.get_random_subset(tableIn, #tableIn)
    end
    local filenames = shuffleTable(filenames)
 
-   -- current position of window on the dataset
-   local position = 1
-
    -- Slice all examples in the batch to have same duration,
    -- allows putting them all in a single tensor for memory efficiency
-   local slices
+   local slices = nil
    -- Used to store number of slices per example, enabling better memory
    -- management (can update slices variable in place)
-   local slicesNumber
-   
-   local function get_window(step_n)
-      if step_n > steps_num then return nil end
-      
-      local filenames_window = {}
-      
-      local win_size = sizes['winSize']
-      local step_size = sizes['stepSize']
-      
-      -- get length of next step
-      local next_step
-      if step_n < steps_num then
-	 next_step = step_size  -- a normal step
-      else
-	 -- in that case, step_n == steps_num, make smaller step
-	 -- with the remaining files
-	 if no_overlap then
-	    next_step = step_size
-	    win_size = sizes['lastStep']
-	 else
-	    next_step = sizes['lastStep']
-	 end
-      end
-      
-      local win_start = (step_n-1) * step_size + next_step + 1
-      -- Update positions in dataset
-      position = win_start
-      local win_end = win_start + win_size - 1
-      
-      if step_n > 0 then
-	 -- Only return new files within the sliding window
-	 -- (i.e. end of full window)
-	 win_start = win_start + (win_size - next_step)
-      end
-      
-      for file_n = win_start, win_end do
-	 filenames_window[1 + file_n-win_start] = filenames[file_n]
-      end
+   local slicesNumber = nil
 
-      return filenames_window
-   end
+   local prev_start, prev_end
    
-   local function update_slices(step_n, new_slices, new_slicesNumber,
+   local function update_slices(cur_start, cur_end, new_slices, new_slicesNumber,
 				prev_position)
-      if step_n == 0 then  -- Initialize containers
+      if not(slices) then  -- Initialize containers
 	 slicesNumber = new_slicesNumber
 	 slices = new_slices
-      elseif step_n < steps_num then
+      else
 	 slicesNumber = slicesNumber:cat(
 	       new_slicesNumber)
 	    
 	 -- Trim and extend slices container
 	 -- Get informations for trimming
-	 prev_win_start = prev_position
-	 step_size = sizes['stepSize']
 	 slicesNumbers_erase = subrange(slicesNumber,
-					prev_win_start,
-					prev_win_start+step_size-1)
+					prev_start,
+					cur_start-1)
 	 
 	 local erase_slices_num_total = sum(slicesNumbers_erase)
 	 
@@ -627,20 +565,9 @@ function M.get_sliding_window_iterator(filenames, f_load, options,
 	 end
       end
    end
-   
-   local step_n = 0
-   local file_position = 1
-   
-   return function()
-      collectgarbage(); collectgarbage()
-      if step_n > steps_num then return nil end
-      
-      -- copy previous position
-      local prev_position = position
-      -- get new files to load
-      local filenames_window = get_window(step_n)
 
-      file_position = file_position + #filenames_window
+   local function f(filenames_window, cur_start, cur_end)
+      collectgarbage(); collectgarbage()
       
       -- slice all examples in the batch to have same duration,
       -- allows putting them all in a single tensor for memory efficiency
@@ -648,13 +575,212 @@ function M.get_sliding_window_iterator(filenames, f_load, options,
 	 filenames_window, f_load, options)
 
       -- update internal memory
-      update_slices(step_n, new_slices, new_slicesNumber, prev_position)
-
-      step_n = step_n + 1
+      update_slices(cur_start, cur_end, new_slices, new_slicesNumber, prev_position)
       
-      return slices, file_position
+      prev_start = cur_start
+
+      return slices
    end
+
+   -- Do not reload pre-loaded files
+   local no_overlap = true
+   return iterator.foreach_windowed(f, filenames, windowSize, windowStep,
+				    no_overlap, verbose)
 end
+
+-- -- Iterator factory for a sliding window over a dataset
+-- -- 
+-- -- Return a new tensor of sequence slices of uniform duration, using a sliding
+-- -- window of the full dataset.
+-- -- Also return the index of the last loaded file in the training dataset
+-- -- (allows tracking training progress).
+-- -- 
+-- -- Each iteration yieds training, validation (and optionnaly) testing subsets
+-- -- from the dataset.
+-- -- Input:
+-- --  * sets, a table of arrays: the dataset over which to iterate
+-- --  * main_window_size, an integer: the size of the window for the training
+-- --   subsets.
+-- --  * sliding_step, an integer: the amount by which to slide the windows
+-- --   at each iteration.
+-- --  * slice_size, an integer: the duration with which to split all the
+-- --   sequences.
+-- --  * f_load, a function : filename -> torch.Tensor: load a file
+-- function M.__get_sliding_window_iterator(filenames, f_load, options,
+-- 					 no_overlap)
+--    local filenames_num = #filenames
+--    local window_size = math.min(options.datasetWindowSize, filenames_num)
+--    local sliding_step = options.datasetWindowStepSize or
+--       math.floor(window_size / 10)
+
+--    -- Use this for a non-overlapping sliding window (last step then uses
+--    -- a smaller window)
+--    local no_overlap = no_overlap or false
+
+--    local slice_size = options.sliceSize
+   
+--    -- Avoid skipping some examples because of a step too long
+--    if sliding_step > window_size then
+--       sliding_step = window_size
+--    end
+   
+--    local function euclidean_division(a, b)
+--       local quotient = math.floor(a / b)
+--       local remainder = a % b
+      
+--       return quotient, remainder
+--    end
+   
+--    local steps_num, remainder_step = euclidean_division(
+--       filenames_num - window_size, sliding_step)
+   
+--    print(window_size) -- DEBUG
+--    print(steps_num) -- DEBUG
+--    local sizes = {}
+--    sizes['winSize'] = window_size
+--    sizes['stepSize'] = sliding_step
+--    sizes['lastStep'] = remainder_step
+   
+--    -- Shuffle the dataset
+--    local function shuffleTable(tableIn)
+--       return sampleFile.get_random_subset(tableIn, #tableIn)
+--    end
+--    local filenames = shuffleTable(filenames)
+--    print(filenames)
+
+--    -- current position of window on the dataset
+--    local position = 1
+
+--    -- Slice all examples in the batch to have same duration,
+--    -- allows putting them all in a single tensor for memory efficiency
+--    local slices
+--    -- Used to store number of slices per example, enabling better memory
+--    -- management (can update slices variable in place)
+--    local slicesNumber
+   
+--    local function get_window(step_n)
+--       if step_n > steps_num then return nil end
+      
+--       -- If window size larger than number of files, return whole set of filenames
+--       if window_size >= filenames_num then return filenames end
+      
+--       local filenames_window = {}
+      
+--       local win_size = sizes['winSize']
+--       local step_size = sizes['stepSize']
+      
+--       -- get length of next step
+--       local next_step
+--       if step_n < steps_num then
+-- 	 next_step = step_size  -- a normal step
+--       else
+-- 	 -- in that case, step_n == steps_num, make smaller step
+-- 	 -- with the remaining files
+-- 	 if no_overlap then
+-- 	    next_step = step_size
+-- 	    win_size = sizes['lastStep']
+-- 	 else
+-- 	    next_step = sizes['lastStep']
+-- 	 end
+--       end
+      
+--       local win_start = (step_n-1) * step_size + next_step + 1
+--       -- Update positions in dataset
+--       position = win_start
+--       local win_end = win_start + win_size - 1
+      
+--       if step_n > 0 then
+-- 	 -- Only return new files within the sliding window
+-- 	 -- (i.e. end of full window)
+-- 	 win_start = win_start + (win_size - next_step)
+--       end
+      
+--       if win_end == filenames_num then print('YAY!') end      
+
+--       for file_n = win_start, win_end do
+-- 	 filenames_window[1 + file_n-win_start] = filenames[file_n]
+--       end
+      
+--       return filenames_window
+--    end
+   
+--    local function update_slices(step_n, new_slices, new_slicesNumber,
+-- 				prev_position)
+--       if step_n == 0 then  -- Initialize containers
+-- 	 slicesNumber = new_slicesNumber
+-- 	 slices = new_slices
+--       elseif step_n < steps_num then
+-- 	 slicesNumber = slicesNumber:cat(
+-- 	       new_slicesNumber)
+	    
+-- 	 -- Trim and extend slices container
+-- 	 -- Get informations for trimming
+-- 	 prev_win_start = prev_position
+-- 	 step_size = sizes['stepSize']
+-- 	 slicesNumbers_erase = subrange(slicesNumber,
+-- 					prev_win_start,
+-- 					prev_win_start+step_size-1)
+	 
+-- 	 local erase_slices_num_total = sum(slicesNumbers_erase)
+	 
+-- 	 for dataType, slicesSubsetData in pairs(slices) do
+-- 	    -- Iterate over original examples and targets
+	    
+-- 	    -- Trim left out slices --
+-- 	    -- Compute number of slices to drop
+-- 	    local current_slices_num = slices[dataType]:size(2)
+-- 	    if erase_slices_num_total == current_slices_num then
+-- 	       -- Erase all slices
+-- 	       slices[dataType] = nil
+-- 	    else
+-- 	       assert(erase_slices_num_total <= current_slices_num,
+-- 		      "Number of slices to delete shouldn't be higher than " ..
+-- 			 "current number of slices")
+-- 	       slices[dataType] = slices[dataType]:
+-- 		  narrow(options.batchDim, 1+erase_slices_num_total,
+-- 			 slices[dataType]:size(options.batchDim)-
+-- 			    erase_slices_num_total)
+-- 	    end
+-- 	    collectgarbage()
+	    
+-- 	    -- Add new slices
+-- 	    if slices[dataType] then
+-- 	       slices[dataType] = slices[dataType]:cat(
+-- 		  new_slices[dataType], options.batchDim)
+-- 	    else  -- all slices were erased, initialize new slices 
+-- 	       slices[dataType] = new_slices[dataType]
+-- 	    end
+-- 	 end
+--       end
+--    end
+   
+--    local step_n = 0
+--    local file_position = 1
+   
+--    return function()
+--       collectgarbage(); collectgarbage()
+--       if step_n > steps_num then return nil end
+      
+--       -- copy previous position
+--       local prev_position = position
+--       -- get new files to load
+--       local filenames_window = get_window(step_n)
+
+--       file_position = file_position + #filenames_window
+      
+--       -- slice all examples in the batch to have same duration,
+--       -- allows putting them all in a single tensor for memory efficiency
+--       local new_slices, new_slicesNumber = M.load_slice_filenames_tensor(
+-- 	 filenames_window, f_load, options)
+
+--       -- update internal memory
+--       update_slices(step_n, new_slices, new_slicesNumber, prev_position)
+
+--       step_n = step_n + 1
+      
+--       return slices, file_position
+--    end
+-- end
 
 -- Load various subsets of filenames into tensors
 -- 
@@ -696,10 +822,28 @@ function M.load_slice_sets_tensor(sets, f_load, options)
 end
 
 -- Take a set of sequences as filenames and return a tensor of equal-size slices
--- (Specialized function for M.load_slice_sets_tensor()) 
-function M.load_slice_filenames_tensor(filenames, f_load, options)
-   if not(filenames) or filenames == {} then return {} end
+-- (Specialized function for M.load_slice_sets_tensor())
+-- 
+-- Input:
+--  * sets, a table of string tables: the training, validation... sets,
+--   as filenames
+--  * f_load, a function : string -> sequence: sequence loading function
+--  * options, a table, with the following fields:
+--    * options.sliceSize, an integer, optional: the size by which to slice
+--     the sequences (default 128)
+--    * options.predictionLength, an integer: the duration over which to do
+--     the forward prediction (default 1 step, predict the next item in the
+--     sequence)
+--  * folderName, a string, optional: a root path for the given filenames
+--     (default '') 
+function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
+   if not(filenames) or next(filenames) == nil then return {}, torch.Tensor() end
    
+   local folderName = folderName or ''
+   local function makeFullFilename(filename)
+      return folderName .. filename
+   end
+
    local sliceSize = options.sliceSize or 128
    local predictionLength = options.predictionLength or 1
 
@@ -707,7 +851,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
 	  "Can't predict more than length of the slices")
    
    -- Initialize containers
-   local example = f_load(filenames[1])  -- get an example in the batch
+   local example = f_load(makeFullFilename(filenames[1]))  -- get an example in the batch
    local featSize = example:size(2)  -- dimension of the time-series
    local slicedData = torch.zeros(sliceSize, 1, featSize)
    local slicedTargets = torch.zeros(sliceSize, 1, featSize)
@@ -742,10 +886,16 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
    
    -- for subsetType, subset in pairs(sets) do
    for sequence_i, filename in ipairs(filenames) do
+      if sequence_i % 300 == 0 then
+	 -- print(slicedData:size())
+	 collectgarbage(); collectgarbage()
+      end
+
       -- print('Files: ' .. sequence_i .. ', memory usage: ' .. collectgarbage('count'))
       
       -- Load the sequences step by step to avoid crashing Lua's memory with a table
-      local sequence = f_load(filename)
+      local fullFilename = makeFullFilename(filename)
+      local sequence = f_load(fullFilename)
       local sequence = zeroPad(sequence)
       local sequenceDuration = sequence:size(1)
       
@@ -773,5 +923,39 @@ function M.load_slice_filenames_tensor(filenames, f_load, options)
    
    return slicedData_table, slicesNumbers
 end
+
+-- Use this function if using filenames sets with the format
+-- {path1 : {filenames}, path2 : {filenames}, ...} 
+function M.load_slice_filenamesFolders_tensor(filenamesFolders, f_load, options)
+   -- Get folders list
+   local function foldersList(filenamesFolders)
+      local folders = {}
+      for folder, _ in pairs(filenamesFolders) do
+	 table.insert(folders, folder)
+      end
+      return folders
+   end
+
+   local folders = foldersList(filenamesFolders)
+
+   local slicedData_table, slicesNumbers = M.load_slice_filenames_tensor(
+      filenamesFolders[folders[1]], f_load, options, folders[1])
+
+   for folder_n=2,#folders do
+      local foldername = folders[folder_n]
+      print(foldername)
+      local new_slicedData_table, new_slicesNumbers = M.load_slice_filenames_tensor(
+      filenamesFolders[foldername], f_load, options, foldername)
+
+      for dataType, _ in pairs(slicedData_table) do
+	 slicedData_table[dataType] = slicedData_table[dataType]:cat(
+	    new_slicedData_table[dataType], options.batchDim)
+      end
+      slicesNumbers = slicesNumbers:cat(new_slicesNumbers)
+   end
+
+   return slicedData_table, slicesNumbers
+end
+
 
 return M

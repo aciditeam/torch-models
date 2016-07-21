@@ -331,7 +331,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function supervisedTrain(model, trainData, options)
+function supervisedTrain(model, criterion, trainData, options)
    -- epoch tracker
    epoch = epoch or 1
    -- time variable
@@ -508,7 +508,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function unsupervisedTrain(model, trainData, options)
+function unsupervisedTrain(model, criterion, trainData, options)
    -- time variable
    local time = sys.clock()
 
@@ -610,7 +610,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function supervisedTest(model, testData, options)
+function supervisedTest(model, criterion, testData, options)
    -- local vars
    local time = sys.clock()
    -- averaged param use?
@@ -695,7 +695,7 @@ function supervisedTest(model, testData, options)
    return (1 - confusion.totalValid);
 end
 
-function unsupervisedTest(model, testData, options)
+function unsupervisedTest(model, criterion, testData, options)
    -- local vars
    local time = sys.clock()
    local err = math.huge
@@ -739,7 +739,7 @@ end
 -- Unsupervised learning function with tables
 -- Mainly used for recurrent networks
 ----------------------------------------------------------------------
-function unsupervisedTable(model, testData, params)
+function unsupervisedTable(model, criterion, testData, params)
    -- are we using the hessian?
    if params.hessian then
       model:initDiagHessianParameters()
@@ -814,10 +814,10 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function __unsupervisedTrain_old(model, testData, params)
+function __unsupervisedTrain_old(model, criterion, testData, params)
    -- check if we are working with a table
    if torch.type(testData.data) == 'table' then
-      return unsupervisedTable(model, testData, params);
+      return unsupervisedTable(model, criterion, testData, params);
    end
    -- are we using the hessian?
    if params.hessian then

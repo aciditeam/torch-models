@@ -125,7 +125,7 @@ function hyperParameters:initStructure(nbNetworks, nbDatasets, nbRepeat, nbSteps
 	 self.nextBatch[{{}, curParam_idx}]:fill(self.range[k][1])
       elseif isCat(self.type[k]) then
 	 self.rangeSteps[curParam_idx] = 1
-	 self.nextBatch[{{}, curParam_idx}]:fill(1)	 
+	 self.nextBatch[{{}, curParam_idx}]:fill(1)
       end
       curParam_idx = curParam_idx + 1
    end
@@ -152,7 +152,7 @@ function hyperParameters:outputResults(fID)
    -- Simplification function
    printf = function(f, s, ...) return f:write(s:format(...)) end -- function
    -- output parameter names
-   for k,v in pairs(self.parameters) do
+   for k,_ in pairs(self.parameters) do
       printf(fID, '%s\t', k)
    end
    printf(fID, 'Fitted\t')
@@ -163,10 +163,11 @@ function hyperParameters:outputResults(fID)
    printf(fID, '\n')
    -- parse through various evaluations
    for n = 1,self.nbEvaluated do
-      for k,v in pairs(self.parameters) do
+      for k,_ in pairs(self.parameters) do
 	 -- output parameter value
 	 if (self.type[k] == 'real') then printf(fID, '%f\t', self.past[k][n])
 	 elseif (self.type[k] == 'int' or self.type[k] == 'catInt') then printf(fID, '%d\t', self.past[k][n])
+	 elseif (self.type[k] == 'catFun') then printf(fID, '%s\t', tostring(self.range[k][self.past[k][n]]()))
 	 elseif isCat(self.type[k]) then printf(fID, '%s\t', tostring(self.range[k][self.past[k][n]]))
 	 end
       end

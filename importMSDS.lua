@@ -53,7 +53,30 @@ function M.load.get_btchromas(h5)
 end
 
 -- Full Million Song Dataset location
--- M.path = './...'
+M.path = locals.paths.msds
+
+local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+local indexes = {}
+indexes['TRAIN'] = {1, 24}
+indexes['VALID'] = {25, 25}
+indexes['TEST'] = {26, 26}
+
+local function make_paths(indexes)
+   local paths = {}
+   for i=indexes[1], indexes[2] do
+      local char = alphabet:sub(i,i)
+      table.insert(paths,  char .. '/')
+   end
+   return paths
+end
+
+local setTypes = {'TRAIN', 'VALID', 'TEST'}
+
+M.sets = {}
+for _, setType in pairs(setTypes) do
+   M.sets[setType] = make_paths(indexes[setType])
+end
 
 ----------------------------------------------------------------------
 -- Million Song Dataset 10K-songs-subset parameters
@@ -63,7 +86,7 @@ M.subset = {}
 
 M.subset.path = locals.paths.msdsSubset
 
-M.subset.training = {'A/'}
+M.subset.train = {'A/'}
 
 local function compose_suffixes(prefix, suffixes)
    local composed = {}
@@ -74,13 +97,13 @@ local function compose_suffixes(prefix, suffixes)
 end
 
 -- This validation subset contains 1217 examples
-M.subset.validation = compose_suffixes('B/', {'A/', 'B/', 'C/', 'D/'})
+M.subset.valid = compose_suffixes('B/', {'A/', 'B/', 'C/', 'D/'})
 
 -- This testing subset contains 1381 examples
-M.subset.testing = compose_suffixes('B/', {'E/', 'F/', 'G/', 'H/', 'I/'})
+M.subset.test = compose_suffixes('B/', {'E/', 'F/', 'G/', 'H/', 'I/'})
 
 M.subset.sets =
-   {TRAIN = M.subset.training, VALID = M.subset.validation,
-    TEST = M.subset.testing}
+   {TRAIN = M.subset.train, VALID = M.subset.valid,
+    TEST = M.subset.test}
 
 return M

@@ -12,10 +12,15 @@ require 'lfs'
 
 local diriter = {}
 
-function diriter.dirtree(dir)
+function diriter.dirtree(dir, usetrimdir)
    assert(dir and dir ~= "", "directory parameter is missing or empty")
    if string.sub(dir, -1) == "/" then
       dir=string.sub(dir, 1, -2)
+   end
+   
+   local dirlength = dir:len()
+   local function trimdir(filename)
+      return filename:sub(dirlength+2,-1)
    end
 
    _, obj_iter = lfs.dir(dir)
@@ -33,6 +38,9 @@ function diriter.dirtree(dir)
 		  table.insert(dirs, entry)
 		  _, obj_iter_subfolder = lfs.dir(filename)
 		  table.insert(diriters, obj_iter_subfolder)
+	       end
+	       if usetrimdir then
+		  filename = trimdir(filename)
 	       end
 	       return filename, attr
 	    end

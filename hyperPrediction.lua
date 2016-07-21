@@ -101,6 +101,9 @@ local function append(appTable, mainTable)
 end
 append(cmd_params, options)
 
+---------------------------------------
+-- Conventions
+---------------------------------------
 -- RNN-library's batch conventions
 options.tDim = 1
 options.batchDim = 2
@@ -108,25 +111,35 @@ options.featsDim = 3
 
 ts_init.set_globals(); ts_init.set_cuda(options)
 
+---------------------------------------
+-- Data loading options
+---------------------------------------
 -- All sequences will be sliced into sub-sequences of this duration
 options.sliceSize = 128
 
 -- Not all the dataset is loaded into memory in a single pass,
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
-options.datasetWindowSize = 128
+options.datasetWindowSize = 500
 options.datasetMaxEpochs = 30
-options.datasetWindowStepSize = math.floor(options.datasetWindowSize / 2) 
+options.datasetWindowStep = math.floor(options.datasetWindowSize / 2) 
 
+---------------------------------------
+-- Training options
+---------------------------------------
 -- Maximum number of successive times the validation error can increase
 -- before stopping training
 options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
-options.batchSize = 64;
+options.batchSize = 128
+
+-- Numbers of layers to consider
+options.minNbLayers = 3
+options.maxNbLayers = 8
 
 ---------------------------------------
--- Length of predictions to perform
+-- Prediction options
 ---------------------------------------
 options.predict = true
 options.predictionLength = 1
@@ -144,8 +157,10 @@ local function getSlidingWindow(hyperParams)
    -- Smaller-sized sliding window over a batch of long examples
    local slidingWindow = nn.SequencerSlidingWindow(
       1, parameters.slidingWindowSize, parameters.slidingWindowStep)
-   batchSlidingWindow = function(minibatch)
-      return slidingWindow:forward(minibatch)
+   do
+      batchSlidingWindow = function(minibatch)
+	 return slidingWindow:forward(minibatch)
+      end
    end
    return batchSlidingWindow
 end
@@ -158,11 +173,34 @@ local function selectPrediction(batch, options)
    return batch:narrow(1, sliceSize-options.predictionLength+1, options.predictionLength)
 end
 
+-- Perfrom prediction test using a sliding window
+local function slidingTest(model, criterion, filenames, f_load, options, hyperParams)
+   local err = 0
+   local batchSlidingWindow = getSlidingWindow(hyperParams)
+   
+   for slice, file_position in import_dataset.get_sliding_window_iterator(
+      filenames, options.datasetWindowSize, options.datasetWindowStep,
+      f_load, options) do
+      local data = {}
+      -- Slice examples them into small training examples with size
+      -- options.slidingWindowSize
+      for dataType, dataSubset in pairs(slice) do
+	 -- Iterate over inputs and targets
+	 local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
+	 data[dataType] = smallSlidingWindowBatch
+      end
+      
+      err = err + unsupervisedTest(model, criterion, data, options);
+   end
+   return err
+end
+
 -- Debug and printing parameters
 -- Print current validation every ... analyzed files
-options.printValidationRate = 200
+options.printValidationRate = 1000
 -- Return a function periodically printing validation error of model of data
-local function getValidationPrinter(model, validData, options)
+local function getValidationPrinter(model, criterion, validFilenames,
+				    f_load, options, hyperParams)
    local previous_file_position = 1
    local previous_print_valid = 0
    
@@ -171,8 +209,8 @@ local function getValidationPrinter(model, validData, options)
       previous_print_valid = previous_print_valid + loaded_files
       
       if previous_print_valid >= options.printValidationRate then
-	 validErr = unsupervisedTest(model, validData,
-				     options);
+	 validErr = slidingTest(model, criterion, validFilenames,
+				f_load, options, hyperParams);
 	 print('Current validation error before training: ' .. validErr)
 	 previous_print_valid = previous_print_valid %
 	    options.printValidationRate
@@ -192,19 +230,32 @@ local f_load = msds.load.get_btchromas
 
 -- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
 local filter_suffix = '.dat'
-local filenamesSets = import_dataset.import_sets_filenames(msds.subset.path,
-							   msds.subset.sets,
-							   filter_suffix)
+
+local datasetPath, datasetSets
+local useSubset = false
+if options.fastRun or useSubset then
+   datasetPath = msds.subset.path
+   datasetSets = msds.subset.sets
+else
+   datasetPath = msds.path
+   datasetSets = msds.sets
+end
+local trimPath = false  -- Changes structure of loadded filenames,
+-- setting this to true uses a slightly less redudant structure, albeit more complex to use
+local filenamesSets = import_dataset.import_sets_filenames(datasetPath,
+							   datasetSets,
+							   filter_suffix,
+							   trimPath)
 
 local auxiliary_sets = {'VALID', 'TEST'}
 
-options['VALID'] = {}; options['TEST'] = {}   
+options['VALID'] = {}; options['TEST'] = {}
 
 options['VALID'].subSize = #filenamesSets['VALID']
---options['VALID'].subSize = 300  -- Comment this out to use full validation set 
+options['VALID'].subSize = 300  -- Comment this out to use full validation set 
 
 options['TEST'].subSize = #filenamesSets['TEST']
---options['TEST'].subSize = 300  -- Comment this out to use full validation set 
+options['TEST'].subSize = 300  -- Comment this out to use full validation set 
 
 local function subrange(elems, start_idx, end_idx)
    local sub_elems = {}
@@ -214,40 +265,55 @@ local function subrange(elems, start_idx, end_idx)
    return sub_elems
 end
 
-local auxiliaryData = {}
-for _, setType in pairs(auxiliary_sets) do
-   local filenames = filenamesSets[setType]
-   print(#filenames)
-
-   if options[setType].subSize < #filenames then
-      print('WARNING! Not using full ' .. setType:lower() ..' set!')
-      print('\tUsing only the first ' .. options[setType].subSize .. ' elements')
-   end
-   local filenames_sub = subrange(filenames, 1, options[setType].subSize)
-   
-   -- Validation set as a tensor
-   auxiliaryData[setType] = import_dataset.load_slice_filenames_tensor(
-      filenames_sub, f_load, options)
+local validFilenames, testFilenames
+if not trimPath then
+   validFilenames = subrange(filenamesSets['VALID'], 1, options['VALID'].subSize)
+   testFilenames = subrange(filenamesSets['TEST'], 1, options['TEST'].subSize)
 end
 
-local validData = auxiliaryData['VALID']
-local testData = auxiliaryData['TEST']
+-- local auxiliaryData = {}
+-- for _, setType in pairs(auxiliary_sets) do
+--    local filenames = filenamesSets[setType]
+--    print(filenames)
+--    -- print(#filenames)
 
-options.featsNum = validData.data:size(options.featsDim)
+--    -- if options[setType].subSize < #filenames then
+--    --    print('WARNING! Not using full ' .. setType:lower() ..' set!')
+--    --    print('\tUsing only the first ' .. options[setType].subSize .. ' elements')
+--    -- end
+--    -- -- local filenames_sub = subrange(filenames, 1, options[setType].subSize)
 
-auxiliaryData = nil; collectgarbage(); collectgarbage()
+--    -- print(filenames_sub)
+--    -- Validation set as a tensor
+--    if trimPath then
+--       auxiliaryData[setType] = import_dataset.load_slice_filenamesFolders_tensor(
+-- 	 filenames, f_load, options)
+--    else
+--       auxiliaryData[setType] = import_dataset.load_slice_filenames_tensor(
+-- 	 filenames, f_load, options)
+--    end
+-- end
+
+-- local validData = auxiliaryData['VALID']
+-- local testData = auxiliaryData['TEST']
+
+options.featsNum = 12 -- validData.data:size(options.featsDim)
+
+-- auxiliaryData = nil; collectgarbage(); collectgarbage()
 
 --------------------
 -- Training set
 --------------------
 local filenamesTrain = filenamesSets['TRAIN'];
 
+filenamesTrain = subrange(filenamesTrain, 1, 600)
+
 -- Randomize training examples order
 local function shuffleTable(tableIn)
    return sampleFile.get_random_subset(tableIn, #tableIn)
 end
 
-filenamesTrain = shuffleTable(filenamesTrain)
+-- filenamesTrain = shuffleTable(filenamesTrain)
 
 local numFilenamesTrain = #filenamesTrain
 
@@ -274,9 +340,9 @@ models = {modelLSTM};
 
 -- Threshold for F0 measure:
 local accCriterion_threshold = 0.2
-criterions = {nn.DistKLDivCriterion,
-	      nn.MSECriterion,
-	      function () return nn.binaryAccCriterion(accCriterion_threshold) end}
+criterions = {--nn.MSECriterion,
+   nn.DistKLDivCriterion}
+-- function () return nn.binaryAccCriterion(accCriterion_threshold) end
 
 print('WARNING must be careful to correcty store results for different criterions')
 
@@ -300,21 +366,21 @@ local nbTrainEpochs = options.datasetMaxEpochs
 local nbBatch = 10
 -- Full number of networks
 local nbNetworks = nbSteps * nbBatch
-local nbRandom = 100000;
+local nbRandom = 100000
 
-
-local testing = false
+local testing = true
 if testing then
-   print('WOOOOOOOOOOOOOW, mega hard training dude')
-   nbSteps = 1
-   nbBatch = 1
+   print('WOOOOOOOOOOOOOW, mega hardcore quick training dude')
+   nbSteps = 4
+   nbBatch = 10
+   options.maxNbLayers = 3
 end
 
 -- Iterate over all models that we want to test
 for k, v in ipairs(models) do   
    print('Start loop on models')
    -- Current model to check
-   curModel = v()
+   local curModel = v()
    local shortModelName = 'model_' .. k .. '-' .. tostring(curModel)
 
    print('Current model: ' .. shortModelName)
@@ -324,19 +390,27 @@ for k, v in ipairs(models) do
    
    for criterion_k, criterion_v in ipairs(criterions) do
       print('Start loop on criterions')
-      criterion = criterion_v()
-      local shortCriterionName = 'criterion_' .. k .. '-' ..
-	 tostring(criterion):gsub('%.', '_')
+      
+      local useLogProbabilities = false
+      if criterion_v == nn.DistKLDivCriterion then
+	 useLogProbabilities = true
+      end
+      
+      local criterion = criterion_v()
+      local shortCriterionName = tostring(criterion):gsub('%.', '_')
       
       print('Current criterion: ' .. shortCriterionName)
       criterion = nn.SequencerCriterion(criterion)
+      criterion.name = shortCriterionName
       if options.cuda then criterion:cuda() end
 
       local mainSaveLocation = savePrefix .. '-' .. shortModelName .. '-' ..
 	 shortCriterionName
+
+      local resultsPerNbLayers = torch.zeros(options.maxNbLayers-options.minNbLayers+1)
       
       -- Loop over number of layers
-      for nbLayers = 3,8 do
+      for nbLayers = options.minNbLayers,options.maxNbLayers do
 	 ----------------------------------------------------------------------
 	 -- Structure optimization code
 	 ----------------------------------------------------------------------
@@ -399,7 +473,12 @@ for k, v in ipairs(models) do
 		     curModel:updateOptions(hyperParams)
 		     -- Define a new model
 		     model = curModel:defineModel(structure, options);
-		     		     
+		     
+		     -- Add a LogSoftMax layer to compute log-probabilities for KL-Divergence
+		     if useLogProbabilities then
+			model:add(nn.Sequencer(nn.LogSoftMax()))
+		     end
+
 		     -- Activate CUDA on the model
 		     if options.cuda then model:cuda(); end
 
@@ -420,6 +499,19 @@ for k, v in ipairs(models) do
 					    ':\n' .. fullModelString .. '\n\n')
 		     fd_structures:flush()
 		     
+		     local batchSlidingWindow = getSlidingWindow(hyperParams)
+		     
+		     -- Keep track of best validation error
+		     local validIncreasedEpochs = 0
+		     local initialValidError = slidingTest(model, criterion, testFilenames,
+		     					   f_load, options, hyperParams);
+		     print('Initial valid error: ' .. initialValidError)
+		     local minValidErr = initialValidError
+		     
+		     local validationPrinter = getValidationPrinter(model, criterion,
+								    validFilenames, f_load,
+								    options, hyperParams)
+
 		     -- Set of trained layers
 		     trainedLayers = {};
 		     
@@ -445,35 +537,22 @@ for k, v in ipairs(models) do
 		     -- 	    configureOptimizer(options, #unsupData.data);
 		     -- 	 end
 		     -- end
-
-
-		     local batchSlidingWindow = getSlidingWindow(hyperParams)
 		     
-		     -- Keep track of best validation error
-		     local validIncreasedEpochs = 0
-		     local initialValidError = unsupervisedTest(model, validData,
-								options);
-		     print('Initial valid error: ' .. initialValidError)
-		     local minValidErr = initialValidError
-
+		     if false and testing then
+			print('WOOOOOW, hardcore testing m8')
+			break
+		     end
+		     
 		     -- Perform SGD on this subset of the dataset
 		     for datasetEpoch = 0, nbTrainEpochs do
-
-			local validationPrinter = getValidationPrinter(model, validData,
-								       options)
-			
-			if testing then
-			   print('WOOOOOW, hardcore testing m8')
-			   break
-			end
-
 			print('Start loop on dataset windows')
 			-- Perform sliding window over the training dataset (too large to fit in memory)
-			for slice, file_position in import_dataset.get_sliding_window_iterator(
-			   filenamesTrain, f_load, options) do
-			   xlua.progress(file_position, numFilenamesTrain)
+			for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
+			   filenamesTrain, options.datasetWindowSize, options.datasetWindowStep,
+			   f_load, options) do
+			   xlua.progress(cur_start, numFilenamesTrain)
 			   
-			   validationPrinter(file_position)
+			   validationPrinter(cur_start)
 			   
 			   local trainData = {}
 			   -- Slice examples them into small training examples with size
@@ -482,13 +561,15 @@ for k, v in ipairs(models) do
 			      -- Iterate over inputs and targets
 			      local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 			      trainData[dataType] = smallSlidingWindowBatch
+
+			      print(smallSlidingWindowBatch:size())
 			   end
 			   
 			   if (not options.adaptiveLearning) then
 			      if torch.type(trainData.data) ~= 'table' then
-			   	 configureOptimizer(options, trainData.data:size(options.batchDim))
+				 configureOptimizer(options, trainData.data:size(options.batchDim))
 			      else
-			   	 configureOptimizer(options, #trainData.data);
+				 configureOptimizer(options, #trainData.data);
 			      end
 			   end
 
@@ -514,7 +595,7 @@ for k, v in ipairs(models) do
 			      end
 			   end
 			   
-			   err = unsupervisedTrain(model, trainData, options);
+			   err = unsupervisedTrain(model, criterion, trainData, options);
 			   print("Reconstruction error (train) : " .. err);
 			   
 			   -- Collect the garbage
@@ -524,8 +605,8 @@ for k, v in ipairs(models) do
 			--[[ Validation set checking/Early-stopping ]]--
 			if datasetEpoch % options.validationRate == 0 then
 			   -- Check reconstruction error on the validation data
-			   validErr = unsupervisedTest(model, validData,
-						       options);
+			   validErr = slidingTest(model, criterion, validFilenames,
+						  f_load, options, hyperParams);
 			   print("Reconstruction error (valid) : " .. validErr);
 
 			   if validErr > minValidErr then
@@ -558,14 +639,22 @@ for k, v in ipairs(models) do
 			model = torch.load(saveLocation);
 			os.remove(saveLocation)  -- clean saved networks
 		     end
-
+		     
 		     -- Evaluate test error
 		     
 		     -- set = number of datasets => 1
 		     -- r = number of repetitions (because random draws, keep best)
 		     -- r could be set to one for a quick run
 		     -- errorRates is then a 1x1 Tensor
-		     errorRates[{set, r}] = unsupervisedTest(model, testData, options)
+		     local testError = slidingTest(model, criterion, testFilenames,
+						   f_load, options, hyperParams)
+		     errorRates[{set, r}] = testError
+		     print('Reconstruction error (test): ' .. testError)
+		     
+		     -- Update layer-wise minimal error
+		     resultsPerNbLayers[nbLayers - options.minNbLayers + 1] = math.min(
+			resultsPerNbLayers[nbLayers - options.minNbLayers + 1],
+			testError)
 		     
 		     -- Remove garbage
 		     collectgarbage();
@@ -584,7 +673,8 @@ for k, v in ipairs(models) do
 	    fID:close();
 	 end  -- step
       end  -- nbLayers
+      torch.save(mainSaveLocation .. "-layerwise_min_test_error.dat", resultsPerNbLayers)
    end  -- criterion
-end  -- modelClass
+end  -- model
 
 fd_structures:close()
