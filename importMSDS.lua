@@ -58,9 +58,9 @@ M.path = locals.paths.msds
 local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
 local indexes = {}
-indexes['TRAIN'] = {1, 24}
-indexes['VALID'] = {25, 25}
-indexes['TEST'] = {26, 26}
+indexes['TRAIN'] = {1, 22}
+indexes['VALID'] = {23, 24}
+indexes['TEST'] = {25, 26}
 
 local function make_paths(indexes)
    local paths = {}
@@ -73,10 +73,41 @@ end
 
 local setTypes = {'TRAIN', 'VALID', 'TEST'}
 
+-- Splitting is:
+--  * Training subset:   data/A/.../ through data/V/.../ (inclusive)
+--  * Validation subset: data/W/.../ through data/X/.../ (inclusive)
+--  * Training subset:   data/Y/.../ through data/Z/.../ (inclusive)
+-- (Around 10% each for validation and testing)
 M.sets = {}
 for _, setType in pairs(setTypes) do
    M.sets[setType] = make_paths(indexes[setType])
 end
+
+local function shallow_copy(tableIn)
+   local tableCopy = {}
+   for k, v in pairs(tableIn) do
+      tableCopy[k] = v
+   end
+   return tableCopy
+end
+
+local function compose_suffixes(prefix, suffixes)
+   local composed = {}
+   for _, suffix in ipairs(suffixes) do
+      table.insert(composed, prefix .. suffix)
+   end
+   return composed
+end
+
+-- A much smaller validation subset of ~5K files for faster training
+--  * Validation subset:  data/W/A/.../ through data/W/C/.../ (inclusive)
+local smallValidSubfolders = make_paths({1, 3})  -- {'A/', ...,  'C/'}
+M.smallValid = compose_suffixes('W/', smallValidSubfolders)
+
+-- A much smaller training subset of ~10K files for faster training
+--  * Training subset:  data/A/A.../ through data/A/G/.../ (inclusive)
+local smallTrainSubfolders = make_paths({1, 7})  -- {'A/', ...,  'G/'}
+M.smallTrain = compose_suffixes('A/', smallTrainSubfolders)
 
 ----------------------------------------------------------------------
 -- Million Song Dataset 10K-songs-subset parameters
@@ -87,14 +118,6 @@ M.subset = {}
 M.subset.path = locals.paths.msdsSubset
 
 M.subset.train = {'A/'}
-
-local function compose_suffixes(prefix, suffixes)
-   local composed = {}
-   for _, suffix in ipairs(suffixes) do
-      table.insert(composed, prefix .. suffix)
-   end
-   return composed
-end
 
 -- This validation subset contains 1217 examples
 M.subset.valid = compose_suffixes('B/', {'A/', 'B/', 'C/', 'D/'})
