@@ -570,9 +570,8 @@ function unsupervisedTrain(model, criterion, trainData, options)
          _,_,average = optimMethod(feval, parameters, optimState)
       else
          _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
-	 -- TODO: check the /, changed to this from a *, maybe wrong
 	 local bSize = inputs:size(options.batchDim)
-	 err = err + fs[1] / bSize -- so that err is indep of batch size
+	 err = err + fs[1] * bSize -- so that err is indep of batch size
       end
       -- TODO
       -- TODO
@@ -698,7 +697,7 @@ end
 function unsupervisedTest(model, criterion, testData, options)
    -- local vars
    local time = sys.clock()
-   local err = math.huge
+   local err = 0
 
    -- averaged param use?
    if average then
@@ -719,7 +718,9 @@ function unsupervisedTest(model, criterion, testData, options)
       -- in case of combined criterion
       if (torch.type(pred) == 'table') then pred = pred[1]; end
 
-      err = criterion:forward(pred, targets)
+      local batchSize = inputs:size(options.batchDim)
+
+      err = err + criterion:forward(pred, targets)
    end
    -- timing
    time = sys.clock() - time
