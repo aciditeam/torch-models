@@ -81,6 +81,8 @@ local saveFolder = locals.paths.timeSeriesResults
 cmd = torch.CmdLine()
 cmd:option('--useCuda', false, 'whether to enable CUDA processing')
 cmd:option('--fastRun', false, 'whether to perform a test on very limited models')
+cmd:option('--smallValidSet', false, 'whether to use a smaller validation set for faster computation')
+cmd:option('--smallTrainSet', false, 'whether to use a smaller training set for faster computation')
 
 -- TODO
 -- cmd:option('--saturateEpoch', 800, 'epoch at which linear decayed LR will reach minLR')
@@ -122,7 +124,8 @@ options.sliceSize = 128
 -- some iterations of the optimisation process, then slide the window
 options.datasetWindowSize = 500
 options.datasetMaxEpochs = 30
-options.datasetWindowStep = math.floor(options.datasetWindowSize / 2) 
+options.datasetWindowStep = options.datasetWindowSize -- math.floor(options.datasetWindowSize / 2) 
+options.validationRate = 3
 
 ---------------------------------------
 -- Training options
@@ -138,6 +141,8 @@ options.batchSize = 128
 options.minNbLayers = 3
 options.maxNbLayers = 8
 
+options.featsNum = 12 -- validData.data:size(options.featsDim)
+
 ---------------------------------------
 -- Prediction options
 ---------------------------------------
@@ -145,10 +150,19 @@ options.predict = true
 options.predictionLength = 1
 
 if options.predictionLength ~= 1 then
-   error("Support for prediction length ~= 1 not yet implemented." ..
+   error('Support for prediction length ~= 1 not yet implemented.' ..
 	    'Best would be to slice target predictions within the networks.')
 end
 
+---------------------------------------
+-- TEST/VALIDATION OPTIONS
+---------------------------------------
+options.testSlidingWindowSize = 16
+options.testSlidingWindowStep = 8
+
+---------------------------------------
+-- Utilities
+---------------------------------------
 -- Initialize a sliding window depending on hyperparameters
 local function getSlidingWindow(hyperParams)
    local function batchSlidingWindow(x) return x end
@@ -176,11 +190,22 @@ end
 -- Perfrom prediction test using a sliding window
 local function slidingTest(model, criterion, filenames, f_load, options, hyperParams)
    local err = 0
-   local batchSlidingWindow = getSlidingWindow(hyperParams)
+
+   local filenames_num = #filenames
+
+   local slidingWindow = nn.SequencerSlidingWindow(
+      1, options.testSlidingWindowSize, options.testSlidingWindowStep)
+
+   local batchSlidingWindow = function(minibatch)
+      return slidingWindow:forward(minibatch)
+   end
    
-   for slice, file_position in import_dataset.get_sliding_window_iterator(
+   local batchSize = 0
+
+   for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
       filenames, options.datasetWindowSize, options.datasetWindowStep,
       f_load, options) do
+      xlua.progress(cur_start, filenames_num)
       local data = {}
       -- Slice examples them into small training examples with size
       -- options.slidingWindowSize
@@ -189,15 +214,16 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
 	 local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 	 data[dataType] = smallSlidingWindowBatch
       end
-      
+
       err = err + unsupervisedTest(model, criterion, data, options);
    end
+   print('\n')
    return err
 end
 
 -- Debug and printing parameters
 -- Print current validation every ... analyzed files
-options.printValidationRate = 1000
+options.printValidationRate = 5000
 -- Return a function periodically printing validation error of model of data
 local function getValidationPrinter(model, criterion, validFilenames,
 				    f_load, options, hyperParams)
@@ -209,9 +235,10 @@ local function getValidationPrinter(model, criterion, validFilenames,
       previous_print_valid = previous_print_valid + loaded_files
       
       if previous_print_valid >= options.printValidationRate then
+	 print('Computing current validation error:')
 	 validErr = slidingTest(model, criterion, validFilenames,
 				f_load, options, hyperParams);
-	 print('Current validation error before training: ' .. validErr)
+	 print('Current validation error: ' .. validErr)
 	 previous_print_valid = previous_print_valid %
 	    options.printValidationRate
       end
@@ -221,7 +248,7 @@ local function getValidationPrinter(model, criterion, validFilenames,
 end
 
 ----------------------------------------------------------------------
--- Initialize datasets
+-- Initialize dataset
 ----------------------------------------------------------------------
 
 local msds = require './importMSDS'
@@ -236,11 +263,20 @@ local useSubset = false
 if options.fastRun or useSubset then
    datasetPath = msds.subset.path
    datasetSets = msds.subset.sets
-else
+else  -- full dataset
    datasetPath = msds.path
    datasetSets = msds.sets
+   
+   if options.smallValidSet then  -- use smaller validation set
+      print('Using restricted validation set')
+      datasetSets['VALID'] = msds.smallValid
+   end
+   if options.smallTrainSet then
+      print('Using restricted train set')
+      datasetSets['TRAIN'] = msds.smallTrain
+   end
 end
-local trimPath = false  -- Changes structure of loadded filenames,
+local trimPath = false  -- Changes structure of loaded filenames,
 -- setting this to true uses a slightly less redudant structure, albeit more complex to use
 local filenamesSets = import_dataset.import_sets_filenames(datasetPath,
 							   datasetSets,
@@ -252,10 +288,10 @@ local auxiliary_sets = {'VALID', 'TEST'}
 options['VALID'] = {}; options['TEST'] = {}
 
 options['VALID'].subSize = #filenamesSets['VALID']
-options['VALID'].subSize = 300  -- Comment this out to use full validation set 
+-- options['VALID'].subSize = 1000  -- Comment this out to use full validation set 
 
 options['TEST'].subSize = #filenamesSets['TEST']
-options['TEST'].subSize = 300  -- Comment this out to use full validation set 
+-- options['TEST'].subSize = 1000  -- Comment this out to use full validation set 
 
 local function subrange(elems, start_idx, end_idx)
    local sub_elems = {}
@@ -266,7 +302,7 @@ local function subrange(elems, start_idx, end_idx)
 end
 
 local validFilenames, testFilenames
-if not trimPath then
+if not(trimPath) then
    validFilenames = subrange(filenamesSets['VALID'], 1, options['VALID'].subSize)
    testFilenames = subrange(filenamesSets['TEST'], 1, options['TEST'].subSize)
 end
@@ -297,8 +333,6 @@ end
 -- local validData = auxiliaryData['VALID']
 -- local testData = auxiliaryData['TEST']
 
-options.featsNum = 12 -- validData.data:size(options.featsDim)
-
 -- auxiliaryData = nil; collectgarbage(); collectgarbage()
 
 --------------------
@@ -306,7 +340,10 @@ options.featsNum = 12 -- validData.data:size(options.featsDim)
 --------------------
 local filenamesTrain = filenamesSets['TRAIN'];
 
-filenamesTrain = subrange(filenamesTrain, 1, 600)
+options.numTrainFiles = #filenamesTrain
+filenamesTrain = subrange(filenamesTrain, 1, options.numTrainFiles)
+
+table.sort(filenamesTrain)
 
 -- Randomize training examples order
 local function shuffleTable(tableIn)
@@ -340,11 +377,9 @@ models = {modelLSTM};
 
 -- Threshold for F0 measure:
 local accCriterion_threshold = 0.2
-criterions = {--nn.MSECriterion,
-   nn.DistKLDivCriterion}
+criterions = {nn.MSECriterion,
+	      nn.DistKLDivCriterion}
 -- function () return nn.binaryAccCriterion(accCriterion_threshold) end
-
-print('WARNING must be careful to correcty store results for different criterions')
 
 -- Sampler to use
 local hyperSample = hyperSampler()
@@ -358,8 +393,6 @@ local hyperParams = hyperParameters(hyperSample)
 local nbRepeat = 2
 -- Number of iterations
 local nbSteps = 100
-local nbTrainSteps = 5
-local nbTrainNetworks = 10
 local nbTrainEpochs = options.datasetMaxEpochs
 -- Number of networks per step
 --local nbBatch = nbThreads
@@ -368,7 +401,7 @@ local nbBatch = 10
 local nbNetworks = nbSteps * nbBatch
 local nbRandom = 100000
 
-local testing = true
+local testing = false
 if testing then
    print('WOOOOOOOOOOOOOW, mega hardcore quick training dude')
    nbSteps = 4
@@ -377,8 +410,8 @@ if testing then
 end
 
 -- Iterate over all models that we want to test
+print('Start loop on models')
 for k, v in ipairs(models) do   
-   print('Start loop on models')
    -- Current model to check
    local curModel = v()
    local shortModelName = 'model_' .. k .. '-' .. tostring(curModel)
@@ -388,9 +421,8 @@ for k, v in ipairs(models) do
    -- Define baseline parameters
    curModel:parametersDefault()
    
+   print('Start loop on criterions')
    for criterion_k, criterion_v in ipairs(criterions) do
-      print('Start loop on criterions')
-      
       local useLogProbabilities = false
       if criterion_v == nn.DistKLDivCriterion then
 	 useLogProbabilities = true
@@ -407,10 +439,13 @@ for k, v in ipairs(models) do
       local mainSaveLocation = savePrefix .. '-' .. shortModelName .. '-' ..
 	 shortCriterionName
 
-      local resultsPerNbLayers = torch.zeros(options.maxNbLayers-options.minNbLayers+1)
+      local minTestErrorNbLayers = torch.DoubleTensor(
+	 options.maxNbLayers-options.minNbLayers+1):fill(math.huge)
       
       -- Loop over number of layers
+      print('Start loop on layers number')
       for nbLayers = options.minNbLayers,options.maxNbLayers do
+	 print('Current layers number: ' .. nbLayers)
 	 ----------------------------------------------------------------------
 	 -- Structure optimization code
 	 ----------------------------------------------------------------------
@@ -418,7 +453,8 @@ for k, v in ipairs(models) do
 	 local structure = {}
 	 structure.nLayers = nbLayers
 	 structure.nInputs = options.featsNum
-	 structure.nOutputs = structure.nInputs;	 
+	 structure.nOutputs = structure.nInputs	 
+	 structure.maxLayerSize = 2048
 
 	 -- -- Default initialization
 	 -- structure.nLayers = 3
@@ -433,26 +469,27 @@ for k, v in ipairs(models) do
 	 -- Reinitialize hyperparameter optimization
 	 hyperParams:unregisterAll();
 	 -- Add the structure as requiring optimization
-	 local minSize, maxSize
 	 if options.fastRun then
 	    print('WAAAAAAAARNING, USING SUPER SMALL LAYERS')
-	    minSize = 32
-	    maxSize = 128
+	    structure.minLayerSize = 32
+	    structure.maxLayerSize = 128
 	    print('WAAAAAAAARNING, USING SUPER SMALL MEMORY')
 	 end
 
-
 	 -- Register external parameters for sliding window
 	 moduleSequencerSlidingWindow.registerParameters(hyperParams)
-
-	 curModel:registerStructure(hyperParams, nbLayers, minSize, maxSize);
+	 
+	 curModel:registerStructure(hyperParams, nbLayers,
+				    structure.minLayerSize, structure.maxLayerSize);
 	 -- Register model-specific options (e.g. non-linarity used)
 	 curModel:registerOptions(hyperParams, options.fastRun)
 	 -- Initialize hyperparameters structure
 	 hyperParams:initStructure(nbNetworks, #setList, nbRepeat, nbSteps, nbBatch);
 	 
 	 -- Optimization step
+	 print('Start hyperparameters optimization loop')
 	 for step = 1,nbSteps do
+	    print('Current optimization step number: ' .. step .. ' of ' .. nbSteps)
 	    -- Local pasts values
 	    localErrors = torch.zeros(nbBatch, #setList, nbRepeat);
 	    -- Architecture batch
@@ -465,7 +502,7 @@ for k, v in ipairs(models) do
 	       structure = curModel:extractStructure(hyperParams, structure);
 	       -- Perform N random repetitions
 	       for r = 1,nbRepeat do
-		  for set = 1, #setList do 
+		  for set = 1, #setList do
 		     -- Configure the default optimizer
 		     configureOptimizer(options, resampleVal);
 		     
@@ -478,10 +515,10 @@ for k, v in ipairs(models) do
 		     if useLogProbabilities then
 			model:add(nn.Sequencer(nn.LogSoftMax()))
 		     end
-
+		     
 		     -- Activate CUDA on the model
 		     if options.cuda then model:cuda(); end
-
+		     
 		     model = curModel:weightsInitialize(model)
 		     print(model)
 		     hyperParams:printCurrent()
@@ -503,7 +540,8 @@ for k, v in ipairs(models) do
 		     
 		     -- Keep track of best validation error
 		     local validIncreasedEpochs = 0
-		     local initialValidError = slidingTest(model, criterion, testFilenames,
+		     print('Computing initial validation error:')
+		     local initialValidError = slidingTest(model, criterion, validFilenames,
 		     					   f_load, options, hyperParams);
 		     print('Initial valid error: ' .. initialValidError)
 		     local minValidErr = initialValidError
@@ -511,9 +549,6 @@ for k, v in ipairs(models) do
 		     local validationPrinter = getValidationPrinter(model, criterion,
 								    validFilenames, f_load,
 								    options, hyperParams)
-
-		     -- Set of trained layers
-		     trainedLayers = {};
 		     
 		     -----------------------------------------------------------
 		     -- DISABLED: No loop on layers, uses batch-normalize --
@@ -544,8 +579,8 @@ for k, v in ipairs(models) do
 		     end
 		     
 		     -- Perform SGD on this subset of the dataset
+		     print('Start loop on dataset windows')
 		     for datasetEpoch = 0, nbTrainEpochs do
-			print('Start loop on dataset windows')
 			-- Perform sliding window over the training dataset (too large to fit in memory)
 			for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
 			   filenamesTrain, options.datasetWindowSize, options.datasetWindowStep,
@@ -555,14 +590,12 @@ for k, v in ipairs(models) do
 			   validationPrinter(cur_start)
 			   
 			   local trainData = {}
-			   -- Slice examples them into small training examples with size
-			   -- options.slidingWindowSize
+			   -- Slice examples into small training examples with size depending on the
+			   -- hyper-parameters
 			   for dataType, dataSubset in pairs(slice) do
 			      -- Iterate over inputs and targets
 			      local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
 			      trainData[dataType] = smallSlidingWindowBatch
-
-			      print(smallSlidingWindowBatch:size())
 			   end
 			   
 			   if (not options.adaptiveLearning) then
@@ -605,6 +638,7 @@ for k, v in ipairs(models) do
 			--[[ Validation set checking/Early-stopping ]]--
 			if datasetEpoch % options.validationRate == 0 then
 			   -- Check reconstruction error on the validation data
+			   print('Computing validation error:')
 			   validErr = slidingTest(model, criterion, validFilenames,
 						  f_load, options, hyperParams);
 			   print("Reconstruction error (valid) : " .. validErr);
@@ -652,8 +686,8 @@ for k, v in ipairs(models) do
 		     print('Reconstruction error (test): ' .. testError)
 		     
 		     -- Update layer-wise minimal error
-		     resultsPerNbLayers[nbLayers - options.minNbLayers + 1] = math.min(
-			resultsPerNbLayers[nbLayers - options.minNbLayers + 1],
+		     minTestErrorNbLayers[nbLayers - options.minNbLayers + 1] = math.min(
+			minTestErrorNbLayers[nbLayers - options.minNbLayers + 1],
 			testError)
 		     
 		     -- Remove garbage
@@ -673,7 +707,7 @@ for k, v in ipairs(models) do
 	    fID:close();
 	 end  -- step
       end  -- nbLayers
-      torch.save(mainSaveLocation .. "-layerwise_min_test_error.dat", resultsPerNbLayers)
+      torch.save(mainSaveLocation .. "-min_test_error_per_nb_layers.dat", minTestErrorNbLayers)
    end  -- criterion
 end  -- model
 
