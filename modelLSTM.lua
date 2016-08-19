@@ -325,10 +325,8 @@ Learning:
   (+ algorithm-specific ?)
 --]]
 
--- nn.HardShrink removed from this 
-local nonLinearityNames = {'nn.HardTanh', 'nn.SoftShrink', 'nn.SoftMax', 'nn.SoftMin',
-   'nn.SoftPlus', 'nn.SoftSign', 'nn.LogSigmoid', 'nn.LogSoftMax', 'nn.Sigmoid', 'nn.Tanh', 'nn.ReLU',
-   'nn.PReLU', 'nn.RReLU', 'nn.ELU', 'nn.LeakyReLU'}
+-- nn.HardShrink removed from this because it caused bugs 
+local nonLinearityNames = {'nn.HardTanh', 'nn.SoftShrink', 'nn.SoftMax', 'nn.SoftMin', 'nn.SoftPlus', 'nn.SoftSign', 'nn.LogSigmoid', 'nn.LogSoftMax', 'nn.Sigmoid', 'nn.Tanh', 'nn.ReLU', 'nn.PReLU', 'nn.RReLU', 'nn.ELU', 'nn.LeakyReLU'}
 
 -- Simple pattern-matching on the various names of non-linearities
 -- 
@@ -356,8 +354,7 @@ local function getNonLinearity(name)
    end
 end
 
-local initializerNames = {'nninit.normal', 'nninit.uniform', 'nninit.xavier', 'nninit.kaiming',
-		      'nninit.orthogonal', 'nninit.sparse'}
+local initializerNames = {'nninit.normal', 'nninit.uniform', 'nninit.xavier', 'nninit.kaiming', 'nninit.orthogonal', 'nninit.sparse'}
 
 local function getInitializer(name)
    if name == 'nninit.normal' then return nninit.normal 

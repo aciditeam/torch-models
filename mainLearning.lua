@@ -214,9 +214,14 @@ end
 
 -- Pre-allocate some memory for a mini batch
 local function allocate_batch(sizes, batchSize, options)
-   local batch = torch.Tensor(sizes[options.tDim], batchSize,
+   local batch
+   -- calling tensor:cuda() is actually ~ non-effective
+   if options.cuda then
+      batch = torch.CudaTensor(sizes[options.tDim], batchSize,
+			       sizes[options.featsDim])
+   else batch = torch.Tensor(sizes[options.tDim], batchSize,
 			      sizes[options.featsDim])
-   if options.cuda then batch:cuda() end
+   end
    return batch
 end
 
@@ -227,13 +232,13 @@ local function minibatchIterator(dataTable, options)
    
    local data = dataTable.data
    local targets = dataTable.targets
-   
+
    if options.predict then
       local predictionSelector =  nn.Sequential():add(
 	 nn.SeqReverseSequence(options.tDim)):add(
 	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
 	 nn.SeqReverseSequence(options.tDim))
-      
+      -- predictionSelector:cuda();
       targets = predictionSelector:forward(targets)
    end
 
@@ -256,7 +261,7 @@ local function minibatchIterator(dataTable, options)
       -- Check size (for last batch)
       local bSize = math.min(options.batchSize,
 			     data:size(options.batchDim) - t + 1);
-
+      
       -- Potential batch space memory trimming
       if (bSize ~= options.batchSize) then
 	 -- Grab the opportunity to make some space
@@ -550,7 +555,7 @@ function unsupervisedTrain(model, criterion, trainData, options)
 	 
 	 -- in case of combined criterion
 	 if (torch.type(output) == 'table') then output = output[1] end
-
+	 
 	 -- penalties (L1 and L2):
 	 if options.regularizeL1 ~= 0 or options.regularizeL2 ~= 0 then
             -- locals:
@@ -569,7 +574,7 @@ function unsupervisedTrain(model, criterion, trainData, options)
       if optimMethod == optim.asgd then
          _,_,average = optimMethod(feval, parameters, optimState)
       else
-         _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
+         _,fs = optimMethod(feval, parameters, optimState)
 	 local bSize = inputs:size(options.batchDim)
 	 err = err + fs[1] * bSize -- so that err is indep of batch size
       end
