@@ -191,6 +191,18 @@ function hyperParameters:printCurrent()
    end
 end
 
+function hyperParameters:saveResults(filename)
+   -- Need to store: self.parameters, self.isFitted, self.ranks, self.errorMeans
+
+   local results = {}
+   results.parameters = self.parameters
+   results.isFitted = self.isFitted
+   results.ranks = self.ranks
+   results.errorMeans = self.errorMeans
+
+   torch.save(filename, results)
+end
+
 ----------------------------------------------------------------------
 -- Create a past values structure to feed to a kernel
 ----------------------------------------------------------------------
