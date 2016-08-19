@@ -65,6 +65,8 @@ require './hyperParameters'
 
 local sampleFile = require './datasets/sampleFile'
 
+local _ = require 'moses'
+
 ----------------------------------------------------------------------
 -- Initialization
 ----------------------------------------------------------------------
@@ -123,8 +125,10 @@ options.sliceSize = 128
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
 options.datasetWindowSize = 500
-options.datasetMaxEpochs = 30
+options.datasetMaxEpochs = 10
 options.datasetWindowStep = options.datasetWindowSize -- math.floor(options.datasetWindowSize / 2) 
+
+options.printValidation = false  -- Disable this to discard intermediate validation error computations
 options.validationRate = 3
 
 ---------------------------------------
@@ -136,10 +140,11 @@ options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
 options.batchSize = 128
+options.learningRate = 0.005  -- Rather big learning rate, quick and rough training
 
 -- Numbers of layers to consider
-options.minNbLayers = 3
-options.maxNbLayers = 8
+options.minNbLayers = 1
+options.maxNbLayers = 5
 
 options.featsNum = 12 -- validData.data:size(options.featsDim)
 
@@ -158,7 +163,6 @@ end
 -- TEST/VALIDATION OPTIONS
 ---------------------------------------
 options.testSlidingWindowSize = 16
-options.testSlidingWindowStep = 8
 
 ---------------------------------------
 -- Utilities
@@ -187,14 +191,15 @@ local function selectPrediction(batch, options)
    return batch:narrow(1, sliceSize-options.predictionLength+1, options.predictionLength)
 end
 
--- Perfrom prediction test using a sliding window
+-- Perform prediction test using a sliding window
+-- Sliding windows use no overlap here
 local function slidingTest(model, criterion, filenames, f_load, options, hyperParams)
    local err = 0
 
    local filenames_num = #filenames
 
    local slidingWindow = nn.SequencerSlidingWindow(
-      1, options.testSlidingWindowSize, options.testSlidingWindowStep)
+      1, options.testSlidingWindowSize, options.testSlidingWindowSize)
 
    local batchSlidingWindow = function(minibatch)
       return slidingWindow:forward(minibatch)
@@ -203,7 +208,7 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
    local batchSize = 0
 
    for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
-      filenames, options.datasetWindowSize, options.datasetWindowStep,
+      filenames, options.datasetWindowSize, options.datasetWindowSize,
       f_load, options) do
       xlua.progress(cur_start, filenames_num)
       local data = {}
@@ -217,7 +222,6 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
 
       err = err + unsupervisedTest(model, criterion, data, options);
    end
-   print('\n')
    return err
 end
 
@@ -227,24 +231,28 @@ options.printValidationRate = 5000
 -- Return a function periodically printing validation error of model of data
 local function getValidationPrinter(model, criterion, validFilenames,
 				    f_load, options, hyperParams)
-   local previous_file_position = 1
-   local previous_print_valid = 0
-   
-   local function validationPrinter(file_position)
-      local loaded_files = file_position - previous_file_position
-      previous_print_valid = previous_print_valid + loaded_files
+   if options.printValidation then
+      local previous_file_position = 1
+      local previous_print_valid = 0
       
-      if previous_print_valid >= options.printValidationRate then
-	 print('Computing current validation error:')
-	 validErr = slidingTest(model, criterion, validFilenames,
-				f_load, options, hyperParams);
-	 print('Current validation error: ' .. validErr)
-	 previous_print_valid = previous_print_valid %
-	    options.printValidationRate
+      local function validationPrinter(file_position)
+	 local loaded_files = file_position - previous_file_position
+	 previous_print_valid = previous_print_valid + loaded_files
+	 
+	 if previous_print_valid >= options.printValidationRate then
+	    print('\n\tComputing current validation error:')
+	    validErr = slidingTest(model, criterion, validFilenames,
+				   f_load, options, hyperParams);
+	    print('\n\tCurrent validation error: ' .. validErr)
+	    previous_print_valid = previous_print_valid %
+	       options.printValidationRate
+	 end
+	 previous_file_position = file_position
       end
-      previous_file_position = file_position
+      return validationPrinter
+   else
+      return function() end
    end
-   return validationPrinter
 end
 
 ----------------------------------------------------------------------
@@ -276,6 +284,7 @@ else  -- full dataset
       datasetSets['TRAIN'] = msds.smallTrain
    end
 end
+
 local trimPath = false  -- Changes structure of loaded filenames,
 -- setting this to true uses a slightly less redudant structure, albeit more complex to use
 local filenamesSets = import_dataset.import_sets_filenames(datasetPath,
@@ -392,7 +401,7 @@ local hyperParams = hyperParameters(hyperSample)
 -- Number of repetition for each architecture
 local nbRepeat = 2
 -- Number of iterations
-local nbSteps = 100
+local nbSteps = 50
 local nbTrainEpochs = options.datasetMaxEpochs
 -- Number of networks per step
 --local nbBatch = nbThreads
@@ -403,7 +412,7 @@ local nbRandom = 100000
 
 local testing = false
 if testing then
-   print('WOOOOOOOOOOOOOW, mega hardcore quick training dude')
+   print('WARNING, quick training enabled')
    nbSteps = 4
    nbBatch = 10
    options.maxNbLayers = 3
@@ -436,11 +445,10 @@ for k, v in ipairs(models) do
       criterion.name = shortCriterionName
       if options.cuda then criterion:cuda() end
 
-      local mainSaveLocation = savePrefix .. '-' .. shortModelName .. '-' ..
+      local mainSaveLocation = savePrefix .. shortModelName .. '-' ..
 	 shortCriterionName
 
-      local minTestErrorNbLayers = torch.DoubleTensor(
-	 options.maxNbLayers-options.minNbLayers+1):fill(math.huge)
+      local minTestErrorNbLayers = torch.DoubleTensor(options.maxNbLayers):fill(math.huge)
       
       -- Loop over number of layers
       print('Start loop on layers number')
@@ -470,10 +478,9 @@ for k, v in ipairs(models) do
 	 hyperParams:unregisterAll();
 	 -- Add the structure as requiring optimization
 	 if options.fastRun then
-	    print('WAAAAAAAARNING, USING SUPER SMALL LAYERS')
+	    print('WARNING: using very small layers')
 	    structure.minLayerSize = 32
 	    structure.maxLayerSize = 128
-	    print('WAAAAAAAARNING, USING SUPER SMALL MEMORY')
 	 end
 
 	 -- Register external parameters for sliding window
@@ -502,7 +509,9 @@ for k, v in ipairs(models) do
 	       structure = curModel:extractStructure(hyperParams, structure);
 	       -- Perform N random repetitions
 	       for r = 1,nbRepeat do
+		  print('Current model repetition number: ' .. r .. ' of ' .. nbRepeat)
 		  for set = 1, #setList do
+		     print('Current training dataset number: ' .. set .. ' of ' .. #setList)
 		     -- Configure the default optimizer
 		     configureOptimizer(options, resampleVal);
 		     
@@ -520,6 +529,7 @@ for k, v in ipairs(models) do
 		     if options.cuda then model:cuda(); end
 		     
 		     model = curModel:weightsInitialize(model)
+		     print('Current model:')
 		     print(model)
 		     hyperParams:printCurrent()
 		     ----------------------------------------------------------------------
@@ -532,24 +542,28 @@ for k, v in ipairs(models) do
 		     end
 		     
 		     local fullModelString = tostring(model):gsub('%.', '_')
-		     fd_structures:write('Network structure ' .. shortModelName ..
-					    ':\n' .. fullModelString .. '\n\n')
-		     fd_structures:flush()
+		     if r == 1 then  -- Don't rewrite structure at each training repetition
+			fd_structures:write('Network structure ' .. shortModelName ..
+					       ':\n' .. fullModelString .. '\n\n')
+			fd_structures:flush()
+		     end
 		     
 		     local batchSlidingWindow = getSlidingWindow(hyperParams)
 		     
-		     -- Keep track of best validation error
-		     local validIncreasedEpochs = 0
-		     print('Computing initial validation error:')
-		     local initialValidError = slidingTest(model, criterion, validFilenames,
-		     					   f_load, options, hyperParams);
-		     print('Initial valid error: ' .. initialValidError)
-		     local minValidErr = initialValidError
+		     local validIncreasedEpochs, initialValidError, minValidErr 
+		     if options.printValidation then
+			-- Keep track of best validation error
+			local validIncreasedEpochs = 0
+			print('Computing initial validation error:')
+			local initialValidError = slidingTest(model, criterion, validFilenames,
+							      f_load, options, hyperParams);
+			print('\nInitial valid error: ' .. initialValidError)
+			local minValidErr = initialValidError
+		     end
 		     
 		     local validationPrinter = getValidationPrinter(model, criterion,
 								    validFilenames, f_load,
 								    options, hyperParams)
-		     
 		     -----------------------------------------------------------
 		     -- DISABLED: No loop on layers, uses batch-normalize --
 		     -----------------------------------------------------------
@@ -573,14 +587,12 @@ for k, v in ipairs(models) do
 		     -- 	 end
 		     -- end
 		     
-		     if false and testing then
-			print('WOOOOOW, hardcore testing m8')
-			break
-		     end
-		     
+		     local isNaNError = false
 		     -- Perform SGD on this subset of the dataset
 		     print('Start loop on dataset windows')
-		     for datasetEpoch = 0, nbTrainEpochs do
+		     for datasetEpoch = 1, nbTrainEpochs do
+			if isNaNError then break end
+			print('Current training epoch: ' .. datasetEpoch .. ' of ' .. nbTrainEpochs)
 			-- Perform sliding window over the training dataset (too large to fit in memory)
 			for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
 			   filenamesTrain, options.datasetWindowSize, options.datasetWindowStep,
@@ -629,50 +641,58 @@ for k, v in ipairs(models) do
 			   end
 			   
 			   err = unsupervisedTrain(model, criterion, trainData, options);
-			   print("Reconstruction error (train) : " .. err);
+			   print("Reconstruction error (train): " .. err);
+
+			   if _.isNaN(err) then
+			      isNaNError= true 
+			      print("Training error is NaN: divergent gradient, stop training");
+			      break
+			   end
 			   
 			   -- Collect the garbage
 			   collectgarbage();
 			end
 
-			--[[ Validation set checking/Early-stopping ]]--
-			if datasetEpoch % options.validationRate == 0 then
-			   -- Check reconstruction error on the validation data
-			   print('Computing validation error:')
-			   validErr = slidingTest(model, criterion, validFilenames,
-						  f_load, options, hyperParams);
-			   print("Reconstruction error (valid) : " .. validErr);
+			-- Disabled early-stopping, models are too big to reload...
+			
+			-- 	--[[ Validation set checking/Early-stopping ]]--
+			-- 	if datasetEpoch % options.validationRate == 0 then
+			-- 	   -- Check reconstruction error on the validation data
+			-- 	   print('Computing validation error:')
+			-- 	   validErr = slidingTest(model, criterion, validFilenames,
+			-- 				  f_load, options, hyperParams);
+			-- 	   print("Reconstruction error (valid) : " .. validErr);
 
-			   if validErr > minValidErr then
-			      -- The validation error has risen since last checkpoint
+			-- 	   if validErr > minValidErr then
+			-- 	      -- The validation error has risen since last checkpoint
 
-			      validIncreasedEpochs = validIncreasedEpochs + 1
-			      print('Validation error increased, previous best value was ' ..
-				       validIncreasedEpochs .. ' epochs ago')
+			-- 	      validIncreasedEpochs = validIncreasedEpochs + 1
+			-- 	      print('Validation error increased, previous best value was ' ..
+			-- 		       validIncreasedEpochs .. ' epochs ago')
 
-			      if validIncreasedEpochs > options.maxValidIncreasedEpochs then
-				 -- Reload the last saved model
-				 model = torch.load(saveLocation);
-				 -- Stop the learning
-				 print(" => Stop learning");
-				 break;
-			      end
-			   else
-			      -- Keep the current error as reference
-			      minValidErr = validErr;
-			      -- Save the current best model
-			      torch.save(saveLocation, model);
+			-- 	      if validIncreasedEpochs > options.maxValidIncreasedEpochs then
+			-- 		 -- Reload the last saved model
+			-- 		 model = torch.load(saveLocation);
+			-- 		 -- Stop the learning
+			-- 		 print(" => Stop learning");
+			-- 		 break;
+			-- 	      end
+			-- 	   else
+			-- 	      -- Keep the current error as reference
+			-- 	      minValidErr = validErr;
+			-- 	      -- Save the current best model
+			-- 	      torch.save(saveLocation, model);
 
-			      validIncreasedEpochs = 0
-			   end
-			end
+			-- 	      validIncreasedEpochs = 0
+			-- 	   end
+			-- 	end
 		     end
 
-		     if not testing then
-			-- Retrieve best training iteration for the current model
-			model = torch.load(saveLocation);
-			os.remove(saveLocation)  -- clean saved networks
-		     end
+		     -- if not testing then
+		     -- 	-- Retrieve best training iteration for the current model
+		     -- 	model = torch.load(saveLocation);
+		     -- 	os.remove(saveLocation)  -- clean saved networks
+		     -- end
 		     
 		     -- Evaluate test error
 		     
@@ -680,15 +700,27 @@ for k, v in ipairs(models) do
 		     -- r = number of repetitions (because random draws, keep best)
 		     -- r could be set to one for a quick run
 		     -- errorRates is then a 1x1 Tensor
-		     local testError = slidingTest(model, criterion, testFilenames,
-						   f_load, options, hyperParams)
+		     print('Computing test error:')
+		     
+		     local testError
+		     -- Make sure never to store a NaN test error, store an inf error instead
+		     -- for consistency
+		     if not isNaNError then  -- Avoid computation if model has diverged
+			testError = slidingTest(model, criterion, testFilenames,
+						f_load, options, hyperParams)
+			print('\nReconstruction error (test): ' .. testError)
+			print('\tMean reconstruction error (test): ' .. testError / #testFilenames)
+		     end
+		     if not(testError) or _.isNaN(testError) then
+			print('\tTest error was NaN, setting it to +inf')
+			testError = math.huge
+		     end
+		     
 		     errorRates[{set, r}] = testError
-		     print('Reconstruction error (test): ' .. testError)
 		     
 		     -- Update layer-wise minimal error
-		     minTestErrorNbLayers[nbLayers - options.minNbLayers + 1] = math.min(
-			minTestErrorNbLayers[nbLayers - options.minNbLayers + 1],
-			testError)
+		     minTestErrorNbLayers[nbLayers] = math.min(
+			minTestErrorNbLayers[nbLayers], testError)
 		     
 		     -- Remove garbage
 		     collectgarbage();
@@ -702,9 +734,11 @@ for k, v in ipairs(models) do
 	    -- Find the next values of parameters to evaluate
 	    hyperParams:fit(nbRandom, nbBatch);
 	    -- Save the current state of optimization (only errors and structures)
-	    fID = assert(io.open(mainSaveLocation .. "-optimize_" .. nbLayers .. ".txt", "w"));
+	    resultsFilename_extensionFree = mainSaveLocation .. "-optimize_" .. nbLayers
+	    fID = assert(io.open(resultsFilename_extensionFree .. '.txt', "w"));
 	    hyperParams:outputResults(fID);
 	    fID:close();
+	    hyperParams:saveResults(resultsFilename_extensionFree .. '.dat');
 	 end  -- step
       end  -- nbLayers
       torch.save(mainSaveLocation .. "-min_test_error_per_nb_layers.dat", minTestErrorNbLayers)
