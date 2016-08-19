@@ -34,7 +34,6 @@ function SlidingWindow:__init(tDim, size, step, nf)
 end
 
 function SlidingWindow:updateOutput(input)
-   print(input:size())
    local rep = torch.ceil((input:size(self.tDim) - self.size + 1) / self.step)
    local sz = torch.LongStorage(input:dim()+1)
    local currentOutput= {}
