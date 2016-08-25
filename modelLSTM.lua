@@ -320,6 +320,7 @@ function modelLSTM:parametersDefault()
 end
 
 function modelLSTM:loadParameters(options)
+   local options = options or {}
    for option, value in pairs(options) do
       self[option] = value
    end
