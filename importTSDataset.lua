@@ -883,9 +883,9 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
 	 local deltaDuration = sliceSize - sequenceDuration
 
 	 local padding = torch.Tensor(deltaDuration + predictionLength, featSize)
-	 zeropadding:fill(options.paddingValue)
+	 padding:fill(options.paddingValue)
 	 
-	 local paddedSequence = zeropadding:cat(sequence, 1)
+	 local paddedSequence = padding:cat(sequence, 1)
 	 return paddedSequence
       else
 	 return sequence
@@ -904,7 +904,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       -- Load the sequences step by step to avoid crashing Lua's memory with a table
       local fullFilename = makeFullFilename(filename)
       local sequence = f_load(fullFilename)
-      local sequence = zeroPad(sequence)
+      local sequence = pad(sequence)
       local sequenceDuration = sequence:size(1)
       
       local slices = sliceSequence(sequence)
