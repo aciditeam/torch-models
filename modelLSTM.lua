@@ -3,7 +3,7 @@
 -- Deep time series learning: Analysis of Torch
 --
 -- Main functions for classification
---
+-- 
 ----------------------------------------------------------------------
 
 ----------------------------------------------------------------------
@@ -87,20 +87,33 @@ end
 
 local modelLSTM, parent = torch.class('modelLSTM', 'modelClass')
 
-function modelLSTM:__init()
+function modelLSTM:__init(options)
    self:parametersDefault()
+   self:loadParameters(options)
    self:parametersRandom()
 end
 
 function modelLSTM:defineModel(structure, options)
    -- Container
    local model = nn.Sequential()
-
+   
+   local batchMode = true
+   
+   local lstmInputs = structure.nInputs * structure.nFeats
+   local lstmOutputs = structure.nOutputs * structure.nFeats
+   if self.sequencer then
+      lstmInputs = self.windowSize * structure.nFeats
+      lstmOutputs = self.windowSize * structure.nFeats
+   end
+   
    -- Hidden layers
    for i = 1, structure.nLayers do
       -- Long Short-Term Memories
       if i == 1 then
-	 curLSTM = nn.FastLSTM(structure.nInputs, structure.layers[i], self.rho)
+	 -- Reshape to minibatch with a single feature
+	 model:add(nn.Reshape(lstmInputs, batchMode))
+
+	 curLSTM = nn.FastLSTM(lstmInputs, structure.layers[i], self.rho);
       else
 	 curLSTM = nn.FastLSTM(structure.layers[i-1], structure.layers[i], self.rho)
       end
@@ -136,10 +149,37 @@ function modelLSTM:defineModel(structure, options)
       -- Sequencer case simply needs to add a linear transform
       -- to number of classes
       model:add(nn.Linear(structure.layers[structure.nLayers],
-			  structure.nOutputs))
+			  lstmOutputs))
       lstmModel = nn.Sequencer(model)
       model = nn.Sequential()
+      -- Number of windows we will consider
+      local nWins = torch.ceil((structure.nInputs - self.windowSize + 1) / self.windowStep)
+      -- Here we add the subsequencing trick
+      local tensOut = false
+      model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
+				 structure.nFeats, tensOut))
+
+      -- if structure.nFeats > 1 then
+      -- 	 model:add(nn.Reshape(nWins, 1, self.windowSize * structure.nFeats))
+      -- end
       model:add(lstmModel)
+      
+      model:add(nn.JoinTable(2, 2))
+      
+      -- Reshape for final fully connected layer
+      model:add(nn.Reshape(nWins * self.windowSize * structure.nFeats, batchMode))
+      
+      local outputDuration = structure.nOutputs  -- Output has duration of input
+      if options.predict then
+	 -- Restrict output duration to prediction
+	 outputDuration = options.predictionLength
+      end
+      
+      model:add(nn.Linear(nWins * self.windowSize * structure.nFeats,
+			  structure.nOutputs * structure.nFeats))
+      -- Reshape to format seqDuration x featsNum
+      model:add(nn.Reshape(structure.nOutputs, structure.nFeats, true))
+      model:add(nn.Transpose({1, 2}))  -- Bring back to rnn convention
    else
       -- Recursor case
       lstmLayers = nn.Recursor(model)
@@ -152,16 +192,6 @@ function modelLSTM:defineModel(structure, options)
       model:add(nn.Linear(structure.layers[structure.nLayers],
 			  structure.nOutputs))
    end
-
-   if options.predict then
-      -- Select only actual predictions to concentrate error computation on those
-      local predictionSelector =  nn.Sequential():add(
-	 nn.SeqReverseSequence(options.tDim)):add(
-	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
-	 nn.SeqReverseSequence(options.tDim))
-      model:add(predictionSelector)
-   end
-   
    return model
 end
 
@@ -289,6 +319,12 @@ function modelLSTM:parametersDefault()
    self.rho = 5
 end
 
+function modelLSTM:loadParameters(options)
+   for option, value in pairs(options) do
+      self[option] = value
+   end
+end
+
 function modelLSTM:parametersRandom()
    -- All possible non-linearities
    self.distributions = {}
@@ -317,7 +353,7 @@ Model:
   * batchNormalize (boolean)
   X addNonLinearity (boolean)
   * nonLinearity (categorical (non linearities, e.g. ReLU))
-  _ dropout (real, [0, 1])
+  * dropout (real, [0, 1])
 
 Learning:
   _ optimizationAlgorithm (categorical)
@@ -380,13 +416,13 @@ end
 -- Register non layer-specific parameters
 function modelLSTM:updateOptions(hyperParams, optimizeBatchNormalize)
    self.rho = hyperParams:getCurrentParameter('rho');
+   self.dropout = hyperParams:getCurrentParameter('dropout')
    self.layerwiseLinear = hyperParams:getCurrentParameter('layerwiseLinear')
    self.batchNormalize = hyperParams:getCurrentParameter('batchNormalize')
    self.nonLinearity = getNonLinearity(
       hyperParams:getCurrentParameter('nonLinearity'))
    self.initializer = getInitializer(
       hyperParams:getCurrentParameter('initializer'))
-   self.dropout = hyperParams:getCurrentParameter('dropout')
 end
 
 function modelLSTM:registerStructure(hyperParams, nLayers, minSize, maxSize)
