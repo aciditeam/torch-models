@@ -1,5 +1,9 @@
 local Printer, _ = torch.class('nn.Printer', 'nn.Module')
 
+-- Prints string str, plus an value chosen by print_input
+-- Options for print_input are:
+--  * true, bool: prints the full input to the tensor
+--  * 'size', string: prints the input's size
 function Printer:__init(str, print_input)
    self.string = str
    self.print_input = print_input or false
