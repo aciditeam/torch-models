@@ -11,7 +11,8 @@ function Printer:print(input)
 	 print(input:size())
       else
 	 if torch.isTensor(input[1]) then
-	    print('Table of tensors: ' .. #input .. ', with dimension')
+	    print('Table of tensors:')
+	    print(#input .. ' tensors, each with dimension:')
 	    print(input[1]:size())
 	 else
 	    print('Input is a table, getting the length is more complicated')
