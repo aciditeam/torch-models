@@ -24,7 +24,7 @@ for windowSize = 1, 5 do
    print('Testing windowSize: ' .. windowSize)
    for windowStep = 1, 5 do
       print('\tTesting windowStep: ' .. windowStep)
-      for last_elem =1,100 do
+      for last_elem =1,30 do
 	 local elems = _.range(1, last_elem)
 	 if verbose then
 	    print('Input elements: ')
@@ -34,7 +34,7 @@ for windowSize = 1, 5 do
 	 local f = function(elems) return elems end
 	 
 	 local recombine = {}
-
+	 
 	 if verbose then print('\nStarting iterator') end
 	 for window, cur_start, cur_end in iterator.foreach_windowed(
 	    f, elems, windowSize, windowStep, no_overlap, verbose) do
@@ -47,9 +47,9 @@ for windowSize = 1, 5 do
 	    
 	    append(recombine, window)
 	 end
-	 
-	 if verbose then print('End.') end
+
 	 assert(isequal(recombine, elems))
+	 if verbose then print('End') end
       end
    end
 end
