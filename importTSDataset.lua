@@ -834,10 +834,14 @@ end
 --    * options.predictionLength, an integer: the duration over which to do
 --     the forward prediction (default 1 step, predict the next item in the
 --     sequence)
+--    * options.paddingValue, a float: the value to add in front of sequences
+--     too short to be sliced
 --  * folderName, a string, optional: a root path for the given filenames
 --     (default '') 
 function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
    if not(filenames) or next(filenames) == nil then return {}, torch.Tensor() end
+
+   local paddingValue = options.paddingValue or 0
    
    local folderName = folderName or ''
    local function makeFullFilename(filename)
@@ -870,15 +874,19 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
    end
    
    -- Adjust duration of sequences to properly extract slices
-   local function zeroPad(sequence)
+   -- Padding is added from the last: sequence starts from void
+   local function pad(sequence)
       local sequenceDuration = sequence:size(1)
       
       if sequenceDuration < sliceSize + predictionLength then
 	 -- Sequence is shorter than the slice size: add silence at the end
 	 local deltaDuration = sliceSize - sequenceDuration
-	 local zeroPaddedSequence = sequence:cat(
-	    torch.zeros(deltaDuration + predictionLength, featSize), 1)
-	 return zeroPaddedSequence
+
+	 local padding = torch.Tensor(deltaDuration + predictionLength, featSize)
+	 zeropadding:fill(options.paddingValue)
+	 
+	 local paddedSequence = zeropadding:cat(sequence, 1)
+	 return paddedSequence
       else
 	 return sequence
       end
