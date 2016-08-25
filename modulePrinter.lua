@@ -10,8 +10,13 @@ function Printer:print(input)
       if torch.isTensor(input) then
 	 print(input:size())
       else
-	 print('Input is a table, getting the length is more complicated')
-	 print('First dimension length is: ' .. #input)
+	 if torch.isTensor(input[1]) then
+	    print('Table of tensors: ' .. #input .. ', with dimension')
+	    print(input[1]:size())
+	 else
+	    print('Input is a table, getting the length is more complicated')
+	    print('First dimension length is: ' .. #input)
+	 end
       end
    elseif self.print_input then
       print(input)
