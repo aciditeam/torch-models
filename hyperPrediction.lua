@@ -83,6 +83,7 @@ local saveFolder = locals.paths.timeSeriesResults
 cmd = torch.CmdLine()
 cmd:option('--useCuda', false, 'whether to enable CUDA processing')
 cmd:option('--fastRun', false, 'whether to perform a test on very limited models')
+cmd:option('--useSubset', false, 'whether to use only the msds subset')
 cmd:option('--smallValidSet', false, 'whether to use a smaller validation set for faster computation')
 cmd:option('--smallTrainSet', false, 'whether to use a smaller training set for faster computation')
 
@@ -121,6 +122,9 @@ ts_init.set_globals(); ts_init.set_cuda(options)
 -- All sequences will be sliced into sub-sequences of this duration
 options.sliceSize = 128
 
+options.paddingValue = 0  -- Pad sequences too short to get a slice with this value
+-- 0 is for silence in chromagrams
+
 -- Not all the dataset is loaded into memory in a single pass,
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
@@ -139,7 +143,7 @@ options.validationRate = 3
 options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
-options.batchSize = 128
+options.batchSize = 64
 options.learningRate = 0.005  -- Rather big learning rate, quick and rough training
 
 -- Numbers of layers to consider
@@ -206,7 +210,7 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
    end
    
    local batchSize = 0
-
+   
    for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
       filenames, options.datasetWindowSize, options.datasetWindowSize,
       f_load, options) do
@@ -214,12 +218,12 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
       local data = {}
       -- Slice examples them into small training examples with size
       -- options.slidingWindowSize
-      for dataType, dataSubset in pairs(slice) do
-	 -- Iterate over inputs and targets
-	 local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
-	 data[dataType] = smallSlidingWindowBatch
-      end
-
+      -- for dataType, dataSubset in pairs(slice) do
+      -- 	 -- Iterate over inputs and targets
+      -- 	 local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
+      -- 	 data[dataType] = smallSlidingWindowBatch
+      -- end
+      
       err = err + unsupervisedTest(model, criterion, data, options);
    end
    return err
@@ -268,7 +272,7 @@ local filter_suffix = '.dat'
 
 local datasetPath, datasetSets
 local useSubset = false
-if options.fastRun or useSubset then
+if options.fastRun or options.useSubset then
    datasetPath = msds.subset.path
    datasetSets = msds.subset.sets
 else  -- full dataset
@@ -460,8 +464,9 @@ for k, v in ipairs(models) do
 	 -- Same basic structure for all
 	 local structure = {}
 	 structure.nLayers = nbLayers
-	 structure.nInputs = options.featsNum
-	 structure.nOutputs = structure.nInputs	 
+	 structure.nInputs = options.sliceSize
+	 structure.nFeats = options.featsNum
+	 structure.nOutputs = options.predictionLength  -- Output only predictions	 
 	 structure.maxLayerSize = 2048
 
 	 -- -- Default initialization
@@ -604,11 +609,12 @@ for k, v in ipairs(models) do
 			   local trainData = {}
 			   -- Slice examples into small training examples with size depending on the
 			   -- hyper-parameters
-			   for dataType, dataSubset in pairs(slice) do
-			      -- Iterate over inputs and targets
-			      local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
-			      trainData[dataType] = smallSlidingWindowBatch
-			   end
+			   -- for dataType, dataSubset in pairs(slice) do
+			   --    -- Iterate over inputs and targets
+			   --    local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
+			   --    trainData[dataType] = smallSlidingWindowBatch
+			   -- end
+			   trainData = slice
 			   
 			   if (not options.adaptiveLearning) then
 			      if torch.type(trainData.data) ~= 'table' then
