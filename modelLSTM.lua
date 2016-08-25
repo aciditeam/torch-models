@@ -94,6 +94,11 @@ function modelLSTM:__init(options)
 end
 
 function modelLSTM:defineModel(structure, options)
+   local verbose = false
+   local function addPrint(model, ...)
+      if verbose then model:add(nn.Printer(...)) end
+   end
+   
    -- Container
    local model = nn.Sequential()
    
@@ -158,15 +163,18 @@ function modelLSTM:defineModel(structure, options)
       local tensOut = false
       model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
 				 structure.nFeats, tensOut))
-
+      
       -- if structure.nFeats > 1 then
       -- 	 model:add(nn.Reshape(nWins, 1, self.windowSize * structure.nFeats))
       -- end
       model:add(lstmModel)
-      
+
+      addPrint(model, 'Before JoinTable', 'size')
       model:add(nn.JoinTable(2, 2))
       
       -- Reshape for final fully connected layer
+      addPrint(model, 'Before reshape for final fully connected layer', 'size')
+      
       model:add(nn.Reshape(nWins * self.windowSize * structure.nFeats, batchMode))
       
       local outputDuration = structure.nOutputs  -- Output has duration of input
@@ -175,10 +183,13 @@ function modelLSTM:defineModel(structure, options)
 	 outputDuration = options.predictionLength
       end
       
+      addPrint(model, 'Input to final fully connected layer', 'size')
       model:add(nn.Linear(nWins * self.windowSize * structure.nFeats,
 			  structure.nOutputs * structure.nFeats))
       -- Reshape to format seqDuration x featsNum
+      addPrint(model, 'Input to reshape to separate time and feature dimensions', 'size')
       model:add(nn.Reshape(structure.nOutputs, structure.nFeats, true))
+      addPrint(model, 'Input to reshape to rnn', 'size')
       model:add(nn.Transpose({1, 2}))  -- Bring back to rnn convention
    else
       -- Recursor case
@@ -192,6 +203,7 @@ function modelLSTM:defineModel(structure, options)
       model:add(nn.Linear(structure.layers[structure.nLayers],
 			  structure.nOutputs))
    end
+   addPrint(model, 'Output', 'size')
    return model
 end
 
