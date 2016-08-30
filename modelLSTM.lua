@@ -94,7 +94,7 @@ function modelLSTM:__init(options)
 end
 
 function modelLSTM:defineModel(structure, options)
-   local verbose = false
+   -- local verbose = true  -- set to true for debug
    local function addPrint(model, ...)
       if verbose then model:add(nn.Printer(...)) end
    end
@@ -116,8 +116,10 @@ function modelLSTM:defineModel(structure, options)
       -- Long Short-Term Memories
       if i == 1 then
 	 -- Reshape to minibatch with a single feature
-	 model:add(nn.Reshape(lstmInputs, batchMode))
-
+	 addPrint(model, 'Inside LSTM', 'size')
+	 model:add(nn.View(-1, lstmInputs))
+	 addPrint(model, 'After LSTM Input Reshape', 'size')
+	 
 	 curLSTM = nn.FastLSTM(lstmInputs, structure.layers[i], self.rho);
       else
 	 curLSTM = nn.FastLSTM(structure.layers[i-1], structure.layers[i], self.rho)
@@ -161,12 +163,15 @@ function modelLSTM:defineModel(structure, options)
       local nWins = torch.ceil((structure.nInputs - self.windowSize + 1) / self.windowStep)
       -- Here we add the subsequencing trick
       local tensOut = false
+      print(options.cuda)
+      addPrint(model, 'Input to sliding window', 'size')
       model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
-				 structure.nFeats, tensOut))
+				 structure.nFeats, tensOut, options.cuda))
       
       -- if structure.nFeats > 1 then
       -- 	 model:add(nn.Reshape(nWins, 1, self.windowSize * structure.nFeats))
       -- end
+      addPrint(model, 'Input to LSTM', 'size')
       model:add(lstmModel)
 
       addPrint(model, 'Before JoinTable', 'size')
@@ -175,7 +180,7 @@ function modelLSTM:defineModel(structure, options)
       -- Reshape for final fully connected layer
       addPrint(model, 'Before reshape for final fully connected layer', 'size')
       
-      model:add(nn.Reshape(nWins * self.windowSize * structure.nFeats, batchMode))
+      model:add(nn.View(-1, nWins * self.windowSize * structure.nFeats))
       
       local outputDuration = structure.nOutputs  -- Output has duration of input
       if options.predict then
@@ -188,7 +193,7 @@ function modelLSTM:defineModel(structure, options)
 			  structure.nOutputs * structure.nFeats))
       -- Reshape to format seqDuration x featsNum
       addPrint(model, 'Input to reshape to separate time and feature dimensions', 'size')
-      model:add(nn.Reshape(structure.nOutputs, structure.nFeats, true))
+      model:add(nn.View(-1, structure.nOutputs, structure.nFeats))
       addPrint(model, 'Input to reshape to rnn', 'size')
       model:add(nn.Transpose({1, 2}))  -- Bring back to rnn convention
    else
@@ -198,7 +203,7 @@ function modelLSTM:defineModel(structure, options)
       -- Add the LSTM layers
       model:add(lstmLayers)
       -- Needs to reshape the data from all outputs
-      model:add(nn.Reshape(structure.layers[structure.nLayers]))
+      model:add(nn.View(structure.layers[structure.nLayers]))
       -- And then add linear transform to number of classes
       model:add(nn.Linear(structure.layers[structure.nLayers],
 			  structure.nOutputs))
