@@ -888,7 +888,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
 	 local deltaDuration = sliceSize - sequenceDuration
 
 	 local padding = torch.Tensor(deltaDuration + predictionLength, featSize)
-	 padding:fill(options.paddingValue)
+	 padding:fill(paddingValue)
 	 
 	 local paddedSequence = padding:cat(sequence, 1)
 	 return paddedSequence
@@ -925,7 +925,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       
       -- Pad end of sequence with silence to compensate for prediction offset
       local offsetPadding = torch.Tensor(predictionLength, featSize)
-      offsetPadding:fill(options.paddingValue)
+      offsetPadding:fill(paddingValue)
       local offsetSequence = sequence:narrow(
 	 1, 1+predictionLength, sequenceDuration-predictionLength):cat(
 	 offsetPadding, 1)
