@@ -69,10 +69,10 @@ options.batchSize = 128;
 function onlineKmeans(filenames, k, f_load, niter, batchsize, callback, verbose)
    -- args
    local help = 'centroids,count = unsup.kmeans(Tensor(npoints,dim), k [, niter, batchsize, callback, verbose])'
-   filenames = filenames or error('missing argument: ' .. help)
-   k = k or error('missing argument: ' .. help)
-   niter = niter or 1
-   batchsize = batchsize or math.min(1000, #filenames)
+   local filenames = filenames or error('missing argument: ' .. help)
+   local k = k or error('missing argument: ' .. help)
+   local niter = niter or 1
+   local batchsize = batchsize or math.min(1000, #filenames)
    
    -- local examplesNum = 0
    -- -- Get number of chromagrams in dataset
@@ -229,7 +229,7 @@ local function writeTable(fd, mainTableName, tableIn)
    fd:flush()
 end
 
-for _, k in ipairs({10, 20, 50, 100}) do
+for _, k in ipairs({10, 20, 30, 50, 50, 100, 150, 200, 300, 500}) do
    print('\nSTART: Computing clustering with ' .. k .. ' clusters\n')
 
    -- Unique identifier to save clusterings for future use
