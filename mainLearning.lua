@@ -233,15 +233,6 @@ local function minibatchIterator(dataTable, options)
    local data = dataTable.data
    local targets = dataTable.targets
 
-   if options.predict then
-      local predictionSelector =  nn.Sequential():add(
-	 nn.SeqReverseSequence(options.tDim)):add(
-	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
-	 nn.SeqReverseSequence(options.tDim))
-      -- predictionSelector:cuda();
-      targets = predictionSelector:forward(targets)
-   end
-
    -- Pre-allocate mini batch space
    local inputsBatch = allocate_batch(data:size(),
 				      options.batchSize, options)
@@ -270,12 +261,6 @@ local function minibatchIterator(dataTable, options)
 	 -- Pre-allocate mini batch space
 	 inputsBatch = allocate_batch(data:size(), bSize, options)
 	 targetsBatch = allocate_batch(targets:size(), bSize, options)
-
-	 -- Switch data to cuda
-	 if options.cuda then
-	    inputsBatch = inputsBatch:cuda();
-	    targetsBatch = targetsBatch:cuda();
-	 end
       end
 
       local k = 1;
@@ -289,32 +274,17 @@ local function minibatchIterator(dataTable, options)
       end
 
       -- Initialize targets
-      if options.predict then
-	 -- Train model to predict subsequent input steps
-	 local k = 1;
-	 for i = t, t+bSize-1 do
-	    -- select new sample
-	    selectedTarget = targets:select(options.batchDim,
-					    shuffle[i])
-	    -- store new sample
-	    targetsBatch:select(options.batchDim, k):copy(selectedTarget)
-	    k = k + 1
-	 end
-      elseif options.inpainting then
-	 -- Perform bidirectional training with inpaiting criterion
-	 -- TODO
-	 error('TODO')
-      else
-	 error('Unhandled case')
+      local k = 1;
+      for i = t, t+bSize-1 do
+	 -- select new sample
+	 selectedTarget = targets:select(options.batchDim,
+					 shuffle[i])
+	 -- store new sample
+	 targetsBatch:select(options.batchDim, k):copy(selectedTarget)
+	 k = k + 1
       end
-
+      
       t = t+options.batchSize
-
-      -- Switch data to cuda
-      if options.cuda then
-	 inputsBatch = inputsBatch:cuda();
-	 targetsBatch = targetsBatch:cuda();
-      end
       
       return inputsBatch, targetsBatch
    end
