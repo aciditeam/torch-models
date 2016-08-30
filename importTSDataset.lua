@@ -858,7 +858,12 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
    local example = f_load(makeFullFilename(filenames[1]))  -- get an example in the batch
    local featSize = example:size(2)  -- dimension of the time-series
    local slicedData = torch.zeros(sliceSize, 1, featSize)
-   local slicedTargets = torch.zeros(sliceSize, 1, featSize)
+   local slicedTargets
+   if options.predict then
+      slicedTargets = torch.zeros(predictionLength, 1, featSize)
+   else
+      slicedTargets = torch.zeros(sliceSize, 1, featSize)
+   end
    local slicesNumbers = torch.zeros(#filenames)
    
    -- Slice input sequence into equal sized windows
@@ -879,7 +884,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       local sequenceDuration = sequence:size(1)
       
       if sequenceDuration < sliceSize + predictionLength then
-	 -- Sequence is shorter than the slice size: add silence at the end
+	 -- Sequence is shorter than the slice size: add silence at the beginning
 	 local deltaDuration = sliceSize - sequenceDuration
 
 	 local padding = torch.Tensor(deltaDuration + predictionLength, featSize)
@@ -890,6 +895,14 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       else
 	 return sequence
       end
+   end
+
+   -- Extract only actual predictions from a batch of examples
+   -- Sequence loader returns targets as simply offset versions of their data
+   -- counterpart, this extracts the predictionLength tail of those sequences
+   local function selectPrediction(batch, options)
+      local sliceSize = batch:size(options.tDim)
+      return batch:narrow(1, sliceSize-options.predictionLength+1, options.predictionLength)
    end
    
    -- for subsetType, subset in pairs(sets) do
@@ -910,10 +923,17 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       local slices = sliceSequence(sequence)
       slicesNumbers[sequence_i] = slices:size(options.batchDim)
       
-      local offsetSequence = sequence:narrow(1, 1+predictionLength,
-					     sequenceDuration-predictionLength):
-	 cat(torch.zeros(predictionLength, featSize), 1)
+      -- Pad end of sequence with silence to compensate for prediction offset
+      local offsetPadding = torch.Tensor(predictionLength, featSize)
+      offsetPadding:fill(options.paddingValue)
+      local offsetSequence = sequence:narrow(
+	 1, 1+predictionLength, sequenceDuration-predictionLength):cat(
+	 offsetPadding, 1)
       local targetSlices = sliceSequence(offsetSequence)
+      
+      if options.predict then
+	 targetSlices = selectPrediction(targetSlices, options)
+      end
       
       slicedData = slicedData:cat(slices, options.batchDim)
       slicedTargets = slicedTargets:cat(targetSlices, options.batchDim)

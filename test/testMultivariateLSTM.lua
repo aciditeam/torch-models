@@ -1,10 +1,11 @@
--- Try and use multivariate LSTMs with Philippe's models
+-- Test use of multivariate LSTMs with Philippe's models
 
 -- Imports
 require 'unsup'
 require 'optim'
 require 'torch'
 require 'nninit'
+local ts_init = require 'TSInitialize'
 require 'importTSDataset'
 require 'mainLearning'
 require 'mainParameters'
@@ -14,6 +15,17 @@ require 'modelCriterias'
 
 require 'moduleSlidingWindow'
 require 'modelLSTM'
+
+
+cmd = torch.CmdLine()
+cmd:option('--useCuda', false, 'whether to enable CUDA processing')
+
+-- parse input params
+cmd_params = cmd:parse(arg)
+
+local useCuda = cmd_params.useCuda
+
+ts_init.set_cuda({cuda=useCuda})
 
 -- Create a default configuration
 options = setDefaultConfiguration();
@@ -27,9 +39,10 @@ options.sliceSize = 32;
 
 options.windowSize = 16
 options.windowStep = 1
-curModel = modelLSTM(options);
 
-curModel:parametersDefault();
+options.cuda = useCuda
+
+curModel = modelLSTM(options);
 
 -- Define structure
 structure = {};
@@ -44,6 +57,8 @@ structure.poolSize = {2, 2, 2};
 structure.nClassLayers = 3;
 
 model = curModel:defineModel(structure, options)
+
+if useCuda then model:cuda() end
 
 print(model)
 
@@ -68,13 +83,15 @@ sequence = torch.Tensor(options.sequenceLength, options.featSize)
 
 j = 0
 for i=1,options.sequenceLength do
-  sequence[{i,{}}]:fill(j)
-  evalPDF(vMean, vSigma, sequence[{i,{}}])
-  sequence[{i,{}}]:add(vBias)
-  j = j + 1
-  if j>10 then j = 0 end
+   sequence[{i,{}}]:fill(j)
+   evalPDF(vMean, vSigma, sequence[{i,{}}])
+   sequence[{i,{}}]:add(vBias)
+   j = j + 1
+   if j>10 then j = 0 end
 end
 -- print('Sequence:'); print(sequence)
+
+if useCuda then sequence = sequence:cuda() end
 
 -- batch mode
 
@@ -86,10 +103,24 @@ minK = 0
 options.nIterations = 100
 options.learningRate = 1e-3
 avgErrs = torch.Tensor(options.nIterations):fill(0)
+
+local inputs
+if useCuda then
+   inputs = torch.CudaTensor(options.sliceSize, options.batchSize, options.featSize)
+else
+   inputs = torch.Tensor(options.sliceSize, options.batchSize, options.featSize)
+end
+local targets = inputs:new()
+
+if useCuda then inputs:cuda(); targets:cuda() end
+   
+criterion = nn.MSECriterion()
+criterion = nn.SequencerCriterion(criterion)
+
+if useCuda then criterion:cuda() end
+
 for k = 1, options.nIterations do
    -- 1. create a sequence of rho time-steps
-   local inputs = torch.Tensor(options.sliceSize, options.batchSize, options.featSize)
-   local targets = inputs:new()
    for step = 1, options.sliceSize do
       -- batch of inputs
       inputs[step] = inputs[step] or sequence.new()
@@ -100,38 +131,33 @@ for k = 1, options.nIterations do
       targets[step] = targets[step] or sequence.new()
       targets[step]:index(sequence, 1, offsets)
    end
+   -- 2. forward sequence through rnn
+
+   local outputs = model:forward(inputs)
+   if useCuda then outputs:cuda() end
+
+   -- if useCuda then targets:cuda() end
+   local err = criterion:forward(outputs, targets)
    
-   --for batchInd=1,options.batchSize do
-      --local inputs = inputs:select(2, batchInd)
-      --local targets = targets:select(2, batchInd)
-      
-      criterion = nn.MSECriterion()
-      criterion = nn.SequencerCriterion(criterion)
+   -- report errors
+   
+   print('Iter: ' .. k .. '   Err: ' .. err)
+   avgErrs[k] = err
+   if avgErrs[k] < minErr then
+      minErr = avgErrs[k]
+      minK = k
+   end
 
-      -- 2. forward sequence through rnn
+   -- 3. backward sequence through rnn (i.e. backprop through time)
+   
+   model:zeroGradParameters()
+   
+   local gradOutputs = criterion:backward(outputs, targets)
+   local gradInputs = model:backward(inputs, gradOutputs)
 
-      local outputs = model:forward(inputs)
-      local err = criterion:forward(outputs, targets)
-      
-      -- report errors
-      
-      print('Iter: ' .. k .. '   Err: ' .. err)
-      avgErrs[k] = err
-      if avgErrs[k] < minErr then
-	 minErr = avgErrs[k]
-	 minK = k
-      end
-
-      -- 3. backward sequence through rnn (i.e. backprop through time)
-      
-      model:zeroGradParameters()
-      
-      local gradOutputs = criterion:backward(outputs, targets)
-      local gradInputs = model:backward(inputs, gradOutputs)
-
-      -- 4. updates parameters
-      
-      model:updateParameters(options.learningRate)
+   -- 4. updates parameters
+   
+   model:updateParameters(options.learningRate)
    --end
 end
 

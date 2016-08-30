@@ -29,13 +29,15 @@ local nninit = require 'nninit'
 
 local SlidingWindow, parent = torch.class('nn.SlidingWindow','nn.Module')
 
-function SlidingWindow:__init(tDim, size, step, nFeats, tensOut, nf)
+function SlidingWindow:__init(tDim, size, step, nFeats,
+			      tensOut, cuda, nf)
    parent.__init(self)
    self.tDim = tDim or 1
    self.size = size or 16
    self.step = step or 1
    self.nFeats = nFeats or 1
    self.tensOut = tensOut or false
+   self.cuda = cuda or false
    self.nf = nf or 1e9
 end
 
@@ -45,12 +47,21 @@ function SlidingWindow:updateOutput(input)
    local currentOutput = {}
 
    if self.tensOut then
-      currentOutput = torch.Tensor(nWins, batchSize, self.size, self.nFeats)
+      if self.cuda then
+	 currentOutput = torch.CudaTensor(nWins, batchSize, self.size, self.nFeats)
+      else
+	 currentOutput = torch.Tensor(nWins, batchSize, self.size, self.nFeats)
+      end
    end
 
    for i=1,nWins do
+      local currentWindow
       currentOutput[i] = input:narrow(self.tDim, ((i - 1) * self.step + 1),
-				      self.size):view(batchSize, self.size, self.nFeats)
+				      self.size):view(batchSize, self.size,
+						      self.nFeats)
+      if self.cuda and not self.tensOut then
+	 currentOutput[i] = currentOutput[i]:cuda()
+      end
    end
    
    self.output = currentOutput
@@ -59,8 +70,12 @@ end
 
 function SlidingWindow:updateGradInput(input, gradOutput)
    local slices = input:size(self.tDim)
-   self.gradInput:resizeAs(input):zero()
-
+   if self.cuda then
+      self.gradInput:resizeAs(input:cuda()):zero()
+   else
+      self.gradInput:resizeAs(input):zero()
+   end
+   
    if self.tensOut then
       nWins = gradOutput:size(1)
    else

@@ -144,7 +144,7 @@ options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
 options.batchSize = 64
-options.learningRate = 0.005  -- Rather big learning rate, quick and rough training
+options.learningRate = 0.0005  -- Rather big learning rate, quick and rough training
 
 -- Numbers of layers to consider
 options.minNbLayers = 1
@@ -157,11 +157,6 @@ options.featsNum = 12 -- validData.data:size(options.featsDim)
 ---------------------------------------
 options.predict = true
 options.predictionLength = 1
-
-if options.predictionLength ~= 1 then
-   error('Support for prediction length ~= 1 not yet implemented.' ..
-	    'Best would be to slice target predictions within the networks.')
-end
 
 ---------------------------------------
 -- TEST/VALIDATION OPTIONS
@@ -199,32 +194,14 @@ end
 -- Sliding windows use no overlap here
 local function slidingTest(model, criterion, filenames, f_load, options, hyperParams)
    local err = 0
-
    local filenames_num = #filenames
-
-   local slidingWindow = nn.SequencerSlidingWindow(
-      1, options.testSlidingWindowSize, options.testSlidingWindowSize)
-
-   local batchSlidingWindow = function(minibatch)
-      return slidingWindow:forward(minibatch)
-   end
-   
-   local batchSize = 0
    
    for slice, cur_start, cur_end in import_dataset.get_sliding_window_iterator(
       filenames, options.datasetWindowSize, options.datasetWindowSize,
       f_load, options) do
       xlua.progress(cur_start, filenames_num)
-      local data = {}
-      -- Slice examples them into small training examples with size
-      -- options.slidingWindowSize
-      -- for dataType, dataSubset in pairs(slice) do
-      -- 	 -- Iterate over inputs and targets
-      -- 	 local smallSlidingWindowBatch = batchSlidingWindow(dataSubset)
-      -- 	 data[dataType] = smallSlidingWindowBatch
-      -- end
       
-      err = err + unsupervisedTest(model, criterion, data, options);
+      err = err + unsupervisedTest(model, criterion, slice, options);
    end
    return err
 end
@@ -414,6 +391,23 @@ local nbBatch = 10
 local nbNetworks = nbSteps * nbBatch
 local nbRandom = 100000
 
+if options.manualMode then
+   -- Number of repetition for each architecture
+   nbRepeat = 1
+   -- Number of iterations
+   nbSteps = 1
+   nbTrainEpochs = options.datasetMaxEpochs
+   -- Number of networks per step
+   --local nbBatch = nbThreads
+   nbBatch = 1
+   -- Full number of networks
+   nbNetworks = 1
+   nbRandom = 1
+
+   models = {modelLSTM}
+   criterions = {nn.MSECriterion}
+end
+
 local testing = false
 if testing then
    print('WARNING, quick training enabled')
@@ -470,14 +464,14 @@ for k, v in ipairs(models) do
 	 structure.maxLayerSize = 2048
 
 	 -- -- Default initialization
-	 -- structure.nLayers = 3
-	 -- structure.nInputs = 12
-	 -- structure.layers = {100, 100, 50, 20};
-	 -- structure.nOutputs = structure.nInputs;
-	 -- structure.convSize = {16, 32, 64};
-	 -- structure.kernelWidth = {8, 8, 8};
-	 -- structure.poolSize = {2, 2, 2};
-	 -- structure.nClassLayers = 3;
+	 if options.manualMode then
+	    structure.nLayers = 3
+	    structure.layers = {2048, 1024, 512};
+	    structure.convSize = {16, 32, 64};
+	    structure.kernelWidth = {8, 8, 8};
+	    structure.poolSize = {2, 2, 2};
+	    structure.nClassLayers = 3;
+	 end
 	 
 	 -- Reinitialize hyperparameter optimization
 	 hyperParams:unregisterAll();
@@ -511,7 +505,9 @@ for k, v in ipairs(models) do
 	       -- Errors of current model
 	       errorRates = torch.zeros(#setList, nbRepeat);
 	       -- Extract current structure
-	       structure = curModel:extractStructure(hyperParams, structure);
+	       if not options.manualMode then
+		  structure = curModel:extractStructure(hyperParams, structure);
+	       end
 	       -- Perform N random repetitions
 	       for r = 1,nbRepeat do
 		  print('Current model repetition number: ' .. r .. ' of ' .. nbRepeat)
@@ -521,7 +517,9 @@ for k, v in ipairs(models) do
 		     configureOptimizer(options, resampleVal);
 		     
 		     -- Update model's internal parameters
-		     curModel:updateOptions(hyperParams)
+		     if not options.manualMode then
+			curModel:updateOptions(hyperParams)
+		     end
 		     -- Define a new model
 		     model = curModel:defineModel(structure, options);
 		     
@@ -734,21 +732,27 @@ for k, v in ipairs(models) do
 	       end  -- repeat
 	       hyperParams:registerResults(errorRates);
 	    end  -- batch
-	    
-	    -- Rank different architecture against each other
-	    hyperParams:updateRanks();
-	    -- Find the next values of parameters to evaluate
-	    hyperParams:fit(nbRandom, nbBatch);
-	    -- Save the current state of optimization (only errors and structures)
-	    resultsFilename_extensionFree = mainSaveLocation .. "-optimize_" .. nbLayers
-	    fID = assert(io.open(resultsFilename_extensionFree .. '.txt', "w"));
-	    hyperParams:outputResults(fID);
-	    fID:close();
-	    hyperParams:saveResults(resultsFilename_extensionFree .. '.dat');
+
+	    if not options.manualMode then
+	       -- Rank different architecture against each other
+	       hyperParams:updateRanks();
+	       -- Find the next values of parameters to evaluate
+	       hyperParams:fit(nbRandom, nbBatch);
+	       -- Save the current state of optimization (only errors and structures)
+	       resultsFilename_extensionFree = mainSaveLocation .. "-optimize_" .. nbLayers
+	       fID = assert(io.open(resultsFilename_extensionFree .. '.txt', "w"));
+	       hyperParams:outputResults(fID);
+	       fID:close();
+	       hyperParams:saveResults(resultsFilename_extensionFree .. '.dat');
+	    end
 	 end  -- step
       end  -- nbLayers
       torch.save(mainSaveLocation .. "-min_test_error_per_nb_layers.dat", minTestErrorNbLayers)
    end  -- criterion
 end  -- model
+
+if options.manualMode then
+   torch.save(mainSaveLocation .. "trained_model.dat", model)
+end
 
 fd_structures:close()
