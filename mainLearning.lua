@@ -213,74 +213,91 @@ end
 ----------------------------------------------------------------------
 
 -- Pre-allocate some memory for a mini batch
-local function allocate_batch(data, batchSize, options)
-   local batch = torch.Tensor(data:size(options.tDim), batchSize,
-			      data:size(options.featsDim))
-   
+local function allocate_batch(sizes, batchSize, options)
+   local batch
+   -- calling tensor:cuda() is actually ~ non-effective
+   if options.cuda then
+      batch = torch.CudaTensor(sizes[options.tDim], batchSize,
+			       sizes[options.featsDim])
+   else batch = torch.Tensor(sizes[options.tDim], batchSize,
+			      sizes[options.featsDim])
+   end
    return batch
 end
 
 -- Iterate through a batch of training examples and targets using mini-batches
-local function minibatchIterator(trainData, options)
+local function minibatchIterator(dataTable, options)
    -- shuffle order at each epoch
-   local shuffle = torch.randperm(trainData.data:size(options.batchDim));
+   local shuffle = torch.randperm(dataTable.data:size(options.batchDim));
    
+   local data = dataTable.data
+   local targets = dataTable.targets
+
+   if options.predict then
+      local predictionSelector =  nn.Sequential():add(
+	 nn.SeqReverseSequence(options.tDim)):add(
+	 nn.Narrow(options.tDim, 1, options.predictionLength)):add(
+	 nn.SeqReverseSequence(options.tDim))
+      -- predictionSelector:cuda();
+      targets = predictionSelector:forward(targets)
+   end
+
    -- Pre-allocate mini batch space
-   local inputs = allocate_batch(trainData['data'],
-				 options.batchSize, options)
-   local targets = allocate_batch(trainData['targets'],
-				  options.batchSize, options)
-   
+   local inputsBatch = allocate_batch(data:size(),
+				      options.batchSize, options)
+   local targetsBatch = allocate_batch(targets:size(),
+				       options.batchSize, options)
+
    local t = 1
-   
+
    return function()
-      if t > trainData.data:size(options.batchDim) then
+      if t > dataTable.data:size(options.batchDim) then
 	 -- All training examples have been used, quit
 	 return nil
       end
       -- disp progress
-      -- xlua.progress(t, trainData.data:size(1))
+      -- xlua.progress(t, dataTable.data:size(1))
 
       -- Check size (for last batch)
       local bSize = math.min(options.batchSize,
-			     trainData.data:size(options.batchDim) - t + 1);
-
+			     data:size(options.batchDim) - t + 1);
+      
       -- Potential batch space memory trimming
       if (bSize ~= options.batchSize) then
 	 -- Grab the opportunity to make some space
-	 inputs = nil; targets = nil; collectgarbage();
-	 
+	 inputsBatch = nil; targetsBatch = nil; collectgarbage();
+
 	 -- Pre-allocate mini batch space
-	 inputs = allocate_batch(trainData['data'], bSize, options)
-	 targets = allocate_batch(trainData['targets'], bSize, options)
-   
+	 inputsBatch = allocate_batch(data:size(), bSize, options)
+	 targetsBatch = allocate_batch(targets:size(), bSize, options)
+
 	 -- Switch data to cuda
 	 if options.cuda then
-	    inputs = inputs:cuda();
-	    targets = targets:cuda();
+	    inputsBatch = inputsBatch:cuda();
+	    targetsBatch = targetsBatch:cuda();
 	 end
       end
 
       local k = 1;
       -- iterate over mini-batch examples
       for i = t, t+bSize-1 do
-         -- select new sample
-	 selectedInput = trainData.data:select(options.batchDim, shuffle[i])
+	 -- select new sample
+	 selectedInput = data:select(options.batchDim, shuffle[i])
 	 -- store new sample
-	 inputs:select(options.batchDim, k):copy(selectedInput)
-         k = k + 1
+	 inputsBatch:select(options.batchDim, k):copy(selectedInput)
+	 k = k + 1
       end
-      
+
       -- Initialize targets
       if options.predict then
 	 -- Train model to predict subsequent input steps
 	 local k = 1;
 	 for i = t, t+bSize-1 do
 	    -- select new sample
-	    selectedTarget = trainData.targets:select(options.batchDim,
-						      shuffle[i])
+	    selectedTarget = targets:select(options.batchDim,
+					    shuffle[i])
 	    -- store new sample
-	    targets:select(options.batchDim, k):copy(selectedTarget)
+	    targetsBatch:select(options.batchDim, k):copy(selectedTarget)
 	    k = k + 1
 	 end
       elseif options.inpainting then
@@ -290,12 +307,16 @@ local function minibatchIterator(trainData, options)
       else
 	 error('Unhandled case')
       end
-      
-      if options.cuda then inputs = inputs:cuda(); targets = targets:cuda() end
 
       t = t+options.batchSize
+
+      -- Switch data to cuda
+      if options.cuda then
+	 inputsBatch = inputsBatch:cuda();
+	 targetsBatch = targetsBatch:cuda();
+      end
       
-      return inputs, targets
+      return inputsBatch, targetsBatch
    end
 end
 
@@ -315,7 +336,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function supervisedTrain(model, trainData, options)
+function supervisedTrain(model, criterion, trainData, options)
    -- epoch tracker
    epoch = epoch or 1
    -- time variable
@@ -334,7 +355,7 @@ function supervisedTrain(model, trainData, options)
    shuffle = torch.randperm(trainData.data:size(options.batchDim));
    
    -- Pre-allocate mini batch space
-   local inputs = allocate_batch(trainData, bSize, options)
+   local inputs = allocate_batch(trainData:size(), bSize, options)
    local targets = torch.zeros(options.batchSize);
 
    -- Switch data to cuda
@@ -353,7 +374,7 @@ function supervisedTrain(model, trainData, options)
 
 	 -- Re-allocate mini batch space
 	 inputs = allocate_batch(trainData, bSize, options)
-   
+	 
 	 -- Initialize targets
 	 targets = torch.zeros(bSize);
 	 
@@ -492,9 +513,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function unsupervisedTrain(model, trainData, epoch, options)
-   -- epoch tracker
-   local epoch = epoch or 1
+function unsupervisedTrain(model, criterion, trainData, options)
    -- time variable
    local time = sys.clock()
 
@@ -504,9 +523,6 @@ function unsupervisedTrain(model, trainData, epoch, options)
    -- set model to training mode (for modules that differ in training and testing, like Dropout)
    model:training();
    
-   -- do one epoch
-   print("==> epoch # " .. epoch .. ' [batch = ' .. options.batchSize .. ']')
-
    for inputs, targets in minibatchIterator(trainData, options) do
       -- create closure to evaluate f(X) and df/dX
       local feval = function(x)
@@ -520,7 +536,7 @@ function unsupervisedTrain(model, trainData, epoch, options)
 	 local f = 0
 	 -- [[ Evaluate function for a complete mini-batch at once ]] --
 	 -- estimate forward pass
-	 
+
 	 local output = model:forward(inputs)
 	 -- estimate classification (compare to target)
 	 local err = criterion:forward(output, targets)
@@ -539,7 +555,7 @@ function unsupervisedTrain(model, trainData, epoch, options)
 	 
 	 -- in case of combined criterion
 	 if (torch.type(output) == 'table') then output = output[1] end
-
+	 
 	 -- penalties (L1 and L2):
 	 if options.regularizeL1 ~= 0 or options.regularizeL2 ~= 0 then
             -- locals:
@@ -558,10 +574,9 @@ function unsupervisedTrain(model, trainData, epoch, options)
       if optimMethod == optim.asgd then
          _,_,average = optimMethod(feval, parameters, optimState)
       else
-         _,fs = optimMethod(feval, parameters, optimState)  -- toto was _
-	 -- TODO: check the /, changed to this from a *, maybe wrong
+         _,fs = optimMethod(feval, parameters, optimState)
 	 local bSize = inputs:size(options.batchDim)
-	 err = err + fs[1] / bSize -- so that err is indep of batch size
+	 err = err + fs[1] * bSize -- so that err is indep of batch size
       end
       -- TODO
       -- TODO
@@ -599,7 +614,7 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function supervisedTest(model, testData, options)
+function supervisedTest(model, criterion, testData, options)
    -- local vars
    local time = sys.clock()
    -- averaged param use?
@@ -684,10 +699,10 @@ function supervisedTest(model, testData, options)
    return (1 - confusion.totalValid);
 end
 
-function unsupervisedTest(model, testData, options)
+function unsupervisedTest(model, criterion, testData, options)
    -- local vars
    local time = sys.clock()
-   local err = math.huge
+   local err = 0
 
    -- averaged param use?
    if average then
@@ -708,7 +723,9 @@ function unsupervisedTest(model, testData, options)
       -- in case of combined criterion
       if (torch.type(pred) == 'table') then pred = pred[1]; end
 
-      err = criterion:forward(pred, targets)
+      local batchSize = inputs:size(options.batchDim)
+
+      err = err + criterion:forward(pred, targets)
    end
    -- timing
    time = sys.clock() - time
@@ -728,7 +745,7 @@ end
 -- Unsupervised learning function with tables
 -- Mainly used for recurrent networks
 ----------------------------------------------------------------------
-function unsupervisedTable(model, testData, params)
+function unsupervisedTable(model, criterion, testData, params)
    -- are we using the hessian?
    if params.hessian then
       model:initDiagHessianParameters()
@@ -803,10 +820,10 @@ end
 --  . maxIter       (2)           - maximum nb of iterations for CG and LBFGS
 --  . type          ('float')     - type of the data: float|double|cuda
 --
-function __unsupervisedTrain_old(model, testData, params)
+function __unsupervisedTrain_old(model, criterion, testData, params)
    -- check if we are working with a table
    if torch.type(testData.data) == 'table' then
-      return unsupervisedTable(model, testData, params);
+      return unsupervisedTable(model, criterion, testData, params);
    end
    -- are we using the hessian?
    if params.hessian then

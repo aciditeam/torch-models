@@ -53,7 +53,7 @@ function SequencerSlidingWindow:updateOutput(input)
    
    for i=2,rep do
       local slice = input:narrow(self.tDim, ((i - 1) * self.step + 1), self.size)
-      currentOutput = currentOutput:cat(slice, 2)
+      currentOutput = currentOutput:cat(slice, 2)  -- TODO remove cat, pre-initialize full tensor 
    end
 
    self.output = currentOutput
@@ -62,6 +62,7 @@ end
 
 function SequencerSlidingWindow:updateGradInput(input, gradOutput)
    error('Not correctly implemented yet!')
+
    local slicesNum = input:size(self.tDim)
    self.gradInput:resizeAs(input):zero()
    for i=1,#gradOutput do 
@@ -75,3 +76,29 @@ function SequencerSlidingWindow:updateGradInput(input, gradOutput)
    end
    return self.gradInput
 end
+
+local M = {}
+
+-- Register parameters to a hyper-parameters structure for optimization  
+function M.registerParameters(hyperParams, minSize, maxSize, maxStep)
+   local maxSize = maxSize or 16
+   local minStep = minStep or 32
+   local maxStep = maxStep or 64
+   
+   hyperParams:registerParameter('slidingWindow', 'bool');
+   -- Size is drawn at random between 0 and maxSize, actual size is windowStep + drawnSize
+   -- This ensures that windowSize >= windowStep
+   hyperParams:registerParameter('slidingWindowSize_addToStep', 'int', {0, maxSize});
+   hyperParams:registerParameter('slidingWindowStep', 'int', {minStep, maxStep});
+end
+
+function M.getParameters(hyperParams)
+   local parameters = {}
+   parameters.useSlidingWindow = hyperParams:getCurrentParameter('slidingWindow')
+   parameters.slidingWindowStep = hyperParams:getCurrentParameter('slidingWindowStep')
+   parameters.slidingWindowSize = parameters.slidingWindowStep +
+      hyperParams:getCurrentParameter('slidingWindowSize_addToStep')
+   return parameters
+end
+
+return M

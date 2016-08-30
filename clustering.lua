@@ -20,6 +20,7 @@ require 'SequencerSlidingWindow'
 
 local import_dataset = require './importTSDataset'
 local ts_init = require './TSInitialize'
+local locals = require './local'
 
 cmd = torch.CmdLine()
 cmd:option('--useCuda', false, 'whether to enable CUDA processing')
@@ -206,7 +207,7 @@ local function subrange(elems, start_idx, end_idx)
    return sub_elems
 end
    
-local saveFolder = '/Users/bazin/work/machine_learning/clusterings/msds-chromagrams/'
+local saveFolder = locals.paths.clusterings .. 'msds-chromagrams/'
 
 local f_load = msds.load.get_btchromas
 local niter = options.datasetMaxEpochs
