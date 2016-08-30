@@ -884,7 +884,7 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       local sequenceDuration = sequence:size(1)
       
       if sequenceDuration < sliceSize + predictionLength then
-	 -- Sequence is shorter than the slice size: add silence at the end
+	 -- Sequence is shorter than the slice size: add silence at the beginning
 	 local deltaDuration = sliceSize - sequenceDuration
 
 	 local padding = torch.Tensor(deltaDuration + predictionLength, featSize)
@@ -923,11 +923,12 @@ function M.load_slice_filenames_tensor(filenames, f_load, options, folderName)
       local slices = sliceSequence(sequence)
       slicesNumbers[sequence_i] = slices:size(options.batchDim)
       
+      -- Pad end of sequence with silence to compensate for prediction offset
       local offsetPadding = torch.Tensor(predictionLength, featSize)
       offsetPadding:fill(options.paddingValue)
-      local offsetSequence = offsetPadding:cat(sequence:narrow(1, 1+predictionLength,
-							       sequenceDuration-predictionLength),
-					       1)
+      local offsetSequence = sequence:narrow(
+	 1, 1+predictionLength, sequenceDuration-predictionLength):cat(
+	 offsetPadding, 1)
       local targetSlices = sliceSequence(offsetSequence)
       
       if options.predict then
