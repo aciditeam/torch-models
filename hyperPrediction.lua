@@ -86,6 +86,7 @@ cmd:option('--fastRun', false, 'whether to perform a test on very limited models
 cmd:option('--useSubset', false, 'whether to use only the msds subset')
 cmd:option('--smallValidSet', false, 'whether to use a smaller validation set for faster computation')
 cmd:option('--smallTrainSet', false, 'whether to use a smaller training set for faster computation')
+cmd:option('--manualMode', false, 'whether to disable hyper-optimization and train only on a chosen structure')
 
 -- TODO
 -- cmd:option('--saturateEpoch', 800, 'epoch at which linear decayed LR will reach minLR')
@@ -129,7 +130,7 @@ options.paddingValue = 0  -- Pad sequences too short to get a slice with this va
 -- we perform a sliding window over it, load a subset, perform
 -- some iterations of the optimisation process, then slide the window
 options.datasetWindowSize = 500
-options.datasetMaxEpochs = 10
+options.datasetMaxEpochs = 2
 options.datasetWindowStep = options.datasetWindowSize -- math.floor(options.datasetWindowSize / 2) 
 
 options.printValidation = false  -- Disable this to discard intermediate validation error computations
@@ -144,10 +145,10 @@ options.maxValidIncreasedEpochs = 5
 
 -- Training parameters
 options.batchSize = 64
-options.learningRate = 0.0005  -- Rather big learning rate, quick and rough training
+options.learningRate = 1e-4
 
 -- Numbers of layers to consider
-options.minNbLayers = 1
+options.minNbLayers = 3
 options.maxNbLayers = 5
 
 options.featsNum = 12 -- validData.data:size(options.featsDim)
@@ -200,8 +201,9 @@ local function slidingTest(model, criterion, filenames, f_load, options, hyperPa
       filenames, options.datasetWindowSize, options.datasetWindowSize,
       f_load, options) do
       xlua.progress(cur_start, filenames_num)
-      
+
       err = err + unsupervisedTest(model, criterion, slice, options);
+      print('Current cumulative error: ' .. err)
    end
    return err
 end
@@ -267,7 +269,7 @@ else  -- full dataset
 end
 
 local trimPath = false  -- Changes structure of loaded filenames,
--- setting this to true uses a slightly less redudant structure, albeit more complex to use
+-- setting this to true uses a slightly less redundant structure, albeit more complex to use
 local filenamesSets = import_dataset.import_sets_filenames(datasetPath,
 							   datasetSets,
 							   filter_suffix,
@@ -416,6 +418,7 @@ if testing then
    options.maxNbLayers = 3
 end
 
+model = nil  -- Declare here for scope-compatibility (allows saving models when using manualMode)
 -- Iterate over all models that we want to test
 print('Start loop on models')
 for k, v in ipairs(models) do   
@@ -443,7 +446,7 @@ for k, v in ipairs(models) do
       criterion.name = shortCriterionName
       if options.cuda then criterion:cuda() end
 
-      local mainSaveLocation = savePrefix .. shortModelName .. '-' ..
+      mainSaveLocation = savePrefix .. shortModelName .. '-' ..
 	 shortCriterionName
 
       local minTestErrorNbLayers = torch.DoubleTensor(options.maxNbLayers):fill(math.huge)
@@ -463,10 +466,11 @@ for k, v in ipairs(models) do
 	 structure.nOutputs = options.predictionLength  -- Output only predictions	 
 	 structure.maxLayerSize = 2048
 
-	 -- -- Default initialization
+	 -- Manual initialization
 	 if options.manualMode then
-	    structure.nLayers = 3
-	    structure.layers = {2048, 1024, 512};
+	    -- Input chosen parameters here for manual training
+	    structure.nLayers = 4
+	    structure.layers = {1024, 1024, 512, 256};
 	    structure.convSize = {16, 32, 64};
 	    structure.kernelWidth = {8, 8, 8};
 	    structure.poolSize = {2, 2, 2};
@@ -521,6 +525,8 @@ for k, v in ipairs(models) do
 			curModel:updateOptions(hyperParams)
 		     end
 		     -- Define a new model
+		     local model = nil  -- clean any previously stored model from memory
+		     collectgarbage(); collectgarbage()
 		     model = curModel:defineModel(structure, options);
 		     
 		     -- Add a LogSoftMax layer to compute log-probabilities for KL-Divergence
@@ -534,7 +540,7 @@ for k, v in ipairs(models) do
 		     model = curModel:weightsInitialize(model)
 		     print('Current model:')
 		     print(model)
-		     hyperParams:printCurrent()
+		     if not options.manualMode then hyperParams:printCurrent() end
 		     ----------------------------------------------------------------------
 		     -- Prediction training code
 		     ----------------------------------------------------------------------
@@ -649,12 +655,12 @@ for k, v in ipairs(models) do
 
 			   if _.isNaN(err) then
 			      isNaNError= true 
-			      print("Training error is NaN: divergent gradient, stop training");
+			      print("Training error is NaN: divergent error, stop training");
 			      break
 			   end
 			   
 			   -- Collect the garbage
-			   collectgarbage();
+			   collectgarbage(); collectgarbage();
 			end
 
 			-- Disabled early-stopping, models are too big to reload...
@@ -690,6 +696,9 @@ for k, v in ipairs(models) do
 			-- 	      validIncreasedEpochs = 0
 			-- 	   end
 			-- 	end
+			if options.manualMode then
+			   torch.save(mainSaveLocation .. "-trained_model.dat", model)
+			end
 		     end
 
 		     -- if not testing then
@@ -727,7 +736,7 @@ for k, v in ipairs(models) do
 			minTestErrorNbLayers[nbLayers], testError)
 		     
 		     -- Remove garbage
-		     collectgarbage();
+		     collectgarbage(); collectgarbage();
 		  end -- set
 	       end  -- repeat
 	       hyperParams:registerResults(errorRates);
@@ -746,13 +755,12 @@ for k, v in ipairs(models) do
 	       hyperParams:saveResults(resultsFilename_extensionFree .. '.dat');
 	    end
 	 end  -- step
+	 if options.manualMode then break end
       end  -- nbLayers
-      torch.save(mainSaveLocation .. "-min_test_error_per_nb_layers.dat", minTestErrorNbLayers)
+      if not options.manualMode then
+	 torch.save(mainSaveLocation .. "-min_test_error_per_nb_layers.dat", minTestErrorNbLayers)
+      end
    end  -- criterion
 end  -- model
-
-if options.manualMode then
-   torch.save(mainSaveLocation .. "trained_model.dat", model)
-end
 
 fd_structures:close()
