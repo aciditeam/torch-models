@@ -93,21 +93,28 @@ end
 
 local function compose_suffixes(prefix, suffixes)
    local composed = {}
-   for _, suffix in ipairs(suffixes) do
+   for __, suffix in ipairs(suffixes) do
       table.insert(composed, prefix .. suffix)
    end
    return composed
 end
 
--- A much smaller validation subset of ~5K files for faster training
+local function append(tableA, tableB)
+   for __, elem in ipairs(tableB) do
+      table.insert(tableA, elem)
+   end
+end
+
+-- A much smaller validation subset of ~20K files for faster training
 --  * Validation subset:  data/W/A/.../ through data/W/C/.../ (inclusive)
-local smallValidSubfolders = make_paths({1, 3})  -- {'A/', ...,  'C/'}
+local smallValidSubfolders = make_paths({1, 12})  -- {'A/', ...,  'C/'}
 M.smallValid = compose_suffixes('W/', smallValidSubfolders)
 
--- A much smaller training subset of ~10K files for faster training
---  * Training subset:  data/A/A.../ through data/A/G/.../ (inclusive)
+-- A much smaller training subset of ~50K files for faster training
+--  * Training subset:  data/A/ + data/B/A.../ through data/B/G/.../ (inclusive)
 local smallTrainSubfolders = make_paths({1, 7})  -- {'A/', ...,  'G/'}
-M.smallTrain = compose_suffixes('A/', smallTrainSubfolders)
+M.smallTrain = {'A/', 'B', 'C'}
+-- append(M.smallTrain, compose_suffixes('D/', smallTrainSubfolders))
 
 ----------------------------------------------------------------------
 -- Million Song Dataset 10K-songs-subset parameters
