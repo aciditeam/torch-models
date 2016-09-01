@@ -1,4 +1,6 @@
-local Printer, _ = torch.class('nn.Printer', 'nn.Module')
+local Printer, __ = torch.class('nn.Printer', 'nn.Module')
+
+local _ = require 'moses'
 
 -- Prints string str, plus an value chosen by print_input
 -- Options for print_input are:
@@ -24,7 +26,15 @@ function Printer:print(input)
 	 end
       end
    elseif self.print_input then
-      print(input)
+      if _.isTable(input) then
+	 print('Input is a table of length: ' .. #input)
+	 print('The content is: ')
+	 for __, tensor in ipairs(input) do
+	    print(tensor)
+	 end
+      elseif torch.isTensor(input) then
+	 print(input)
+      end
    end
 end
 
