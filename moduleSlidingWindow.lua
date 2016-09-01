@@ -55,7 +55,6 @@ function SlidingWindow:updateOutput(input)
    end
 
    for i=1,nWins do
-      local currentWindow
       currentOutput[i] = input:narrow(self.tDim, ((i - 1) * self.step + 1),
 				      self.size):view(batchSize, self.size,
 						      self.nFeats)

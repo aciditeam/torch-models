@@ -163,10 +163,10 @@ function modelLSTM:defineModel(structure, options)
       local nWins = torch.ceil((structure.nInputs - self.windowSize + 1) / self.windowStep)
       -- Here we add the subsequencing trick
       local tensOut = false
-      print(options.cuda)
       addPrint(model, 'Input to sliding window', 'size')
       model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
 				 structure.nFeats, tensOut, options.cuda))
+      addPrint(model, 'Sliding Window Output', true)
       
       -- if structure.nFeats > 1 then
       -- 	 model:add(nn.Reshape(nWins, 1, self.windowSize * structure.nFeats))
@@ -330,7 +330,7 @@ function modelLSTM:parametersDefault()
    self.initForget = true
    self.sequencer = true
    self.pretrain = true
-   self.dropout = 0.5
+   self.dropout = 0.2
    self.windowSize = 16
    self.windowStep = 1
    self.rho = 5
