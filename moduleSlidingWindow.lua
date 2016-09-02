@@ -56,8 +56,7 @@ function SlidingWindow:updateOutput(input)
 
    for i=1,nWins do
       currentOutput[i] = input:narrow(self.tDim, ((i - 1) * self.step + 1),
-				      self.size):view(batchSize, self.size,
-						      self.nFeats)
+				      self.size):transpose(1, 2):contiguous()
       if self.cuda and not self.tensOut then
 	 currentOutput[i] = currentOutput[i]:cuda()
       end
@@ -83,7 +82,7 @@ function SlidingWindow:updateGradInput(input, gradOutput)
    
    for i=1,nWins do
       local currentGradInput
-      currentGradInput = gradOutput[i]
+      currentGradInput = gradOutput[i]:transpose(1, 2)
 
       local curIdx = ((i - 1) * self.step + 1)
       local curWin = {curIdx, curIdx + self.size - 1}
