@@ -469,7 +469,7 @@ for k, v in ipairs(models) do
 	 -- Manual initialization
 	 if options.manualMode then
 	    -- Input chosen parameters here for manual training
-	    structure.nLayers = 4
+	    structure.nLayers = 3
 	    structure.layers = {1024, 1024, 512, 256};
 	    structure.convSize = {16, 32, 64};
 	    structure.kernelWidth = {8, 8, 8};
@@ -528,6 +528,42 @@ for k, v in ipairs(models) do
 		     local model = nil  -- clean any previously stored model from memory
 		     collectgarbage(); collectgarbage()
 		     model = curModel:defineModel(structure, options);
+
+		     local fullManual = true
+		     local savedLoad = true
+		     if options.manualMode and fullManual then
+			model = nil
+			if not savedLoad then
+			   model = nn.Sequential()
+			   
+			   model:add(nn.Transpose({1, 2}))
+			   model:add(nn.View(-1, structure.nInputs * structure.nFeats))
+
+			   model:add(nn.Linear(structure.nInputs * structure.nFeats, 1024))
+			   model:add(nn.BatchNormalization(1024))
+			   model:add(nn.ReLU())
+			   model:add(nn.Linear(1024, 1024))
+			   model:add(nn.BatchNormalization(1024))
+			   model:add(nn.ReLU())
+			   model:add(nn.Linear(1024, 512))
+			   model:add(nn.BatchNormalization(512))
+			   model:add(nn.ReLU())
+			   model:add(nn.Linear(512, structure.nOutputs * structure.nFeats))
+
+			   model:add(nn.View(-1, structure.nOutputs, structure.nFeats))
+			   model:add(nn.Transpose({1, 2}))
+			   
+			   shortModelName = 'manually_designed-model-mlp'
+			else
+			   model = torch.load('/home/aciditeam/results/models/' ..
+						 '20160901-223648-model_1-modelLSTM-nn_MSECriterion-' ..
+						 'trained_model.dat')
+			   shortModelName = 'reloaded-20160901-223648-modelLSTM'
+			end
+			-- shortModelName = 'model_' .. k .. '-' .. tostring(curModel)
+			mainSaveLocation = savePrefix .. shortModelName .. '-' ..
+			   shortCriterionName
+		     end
 		     
 		     -- Add a LogSoftMax layer to compute log-probabilities for KL-Divergence
 		     if useLogProbabilities then
@@ -537,7 +573,9 @@ for k, v in ipairs(models) do
 		     -- Activate CUDA on the model
 		     if options.cuda then model:cuda(); end
 		     
-		     model = curModel:weightsInitialize(model)
+		     if not(fullManual and savedLoad) then
+			model = curModel:weightsInitialize(model)
+		     end
 		     print('Current model:')
 		     print(model)
 		     if not options.manualMode then hyperParams:printCurrent() end
