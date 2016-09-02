@@ -103,12 +103,16 @@ function modelLSTM:defineModel(structure, options)
    local model = nn.Sequential()
    
    local batchMode = true
+   local slidingWindow = true
    
    local lstmInputs = structure.nInputs * structure.nFeats
    local lstmOutputs = structure.nOutputs * structure.nFeats
-   if self.sequencer then
+   if self.sequencer and slidingWindow then
       lstmInputs = self.windowSize * structure.nFeats
       lstmOutputs = self.windowSize * structure.nFeats
+   elseif self.sequencer then
+      lstmInputs = structure.nFeats
+      lstmOutputs = structure.nFeats
    end
    
    -- Hidden layers
@@ -164,24 +168,33 @@ function modelLSTM:defineModel(structure, options)
       -- Here we add the subsequencing trick
       local tensOut = false
       addPrint(model, 'Input to sliding window', 'size')
-      model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
-				 structure.nFeats, tensOut, options.cuda))
-      addPrint(model, 'Sliding Window Output', true)
-      
+      if slidingWindow then
+	 model:add(nn.SlidingWindow(1, self.windowSize, self.windowStep,
+				    structure.nFeats, tensOut, options.cuda))
+	 addPrint(model, 'Sliding Window Output', 'size')
+      end
       -- if structure.nFeats > 1 then
       -- 	 model:add(nn.Reshape(nWins, 1, self.windowSize * structure.nFeats))
       -- end
       addPrint(model, 'Input to LSTM', 'size')
       model:add(lstmModel)
-
-      addPrint(model, 'Before JoinTable', 'size')
-      model:add(nn.JoinTable(2, 2))
+      
+      if slidingWindow then
+	 addPrint(model, 'Before JoinTable', 'size')
+	 model:add(nn.JoinTable(2, 2))
+      else
+	 model:add(nn.Transpose({1, 2}))
+      end
       
       -- Reshape for final fully connected layer
+      -- model:add(nn.Printer('Before reshape for final fully connected layer', 'size'))
       addPrint(model, 'Before reshape for final fully connected layer', 'size')
-      
-      model:add(nn.View(-1, nWins * self.windowSize * structure.nFeats))
-      
+      if slidingWindow then
+	 model:add(nn.View(-1, nWins * self.windowSize * structure.nFeats))
+      else
+	 model:add(nn.View(-1, structure.nInputs * structure.nFeats))
+      end
+	 
       local outputDuration = structure.nOutputs  -- Output has duration of input
       if options.predict then
 	 -- Restrict output duration to prediction
@@ -189,8 +202,13 @@ function modelLSTM:defineModel(structure, options)
       end
       
       addPrint(model, 'Input to final fully connected layer', 'size')
-      model:add(nn.Linear(nWins * self.windowSize * structure.nFeats,
-			  structure.nOutputs * structure.nFeats))
+      if slidingWindow then
+	 model:add(nn.Linear(nWins * self.windowSize * structure.nFeats,
+			     structure.nOutputs * structure.nFeats))
+      else
+	 model:add(nn.Linear(structure.nInputs * structure.nFeats,
+			     structure.nOutputs * structure.nFeats))
+      end
       -- Reshape to format seqDuration x featsNum
       addPrint(model, 'Input to reshape to separate time and feature dimensions', 'size')
       model:add(nn.View(-1, structure.nOutputs, structure.nFeats))
