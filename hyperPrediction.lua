@@ -87,6 +87,11 @@ cmd:option('--useSubset', false, 'whether to use only the msds subset')
 cmd:option('--smallValidSet', false, 'whether to use a smaller validation set for faster computation')
 cmd:option('--smallTrainSet', false, 'whether to use a smaller training set for faster computation')
 cmd:option('--manualMode', false, 'whether to disable hyper-optimization and train only on a chosen structure')
+cmd:option('--loadModel', '', 'select a previously stored model to further train or test (implies --manualMode)')
+cmd:option('--testOnly', false, 'only perform computation of test error, no training' ..
+	      '\n(implies --manualMode, requires --loadModel)')
+cmd:option('--modelUniform', false, 'use uniform sampling as prediction model')
+cmd:option('--modelRepeat', false, 'use memoryless repeat as prediction model')
 
 -- TODO
 -- cmd:option('--saturateEpoch', 800, 'epoch at which linear decayed LR will reach minLR')
@@ -97,6 +102,9 @@ cmd:option('--manualMode', false, 'whether to disable hyper-optimization and tra
 
 -- parse input params
 cmd_params = cmd:parse(arg)
+cmd_params.manualMode = cmd_params.manualMode or cmd_params.loadModel
+assert(not(cmd_params.testOnly) or cmd_params.loadModel~='' or
+	  cmd_params.modelUniform or cmd_params.modelRepeat, 'Must provide model to test')
 
 local options = ts_init.get_options(cmd_params.useCuda)
 
@@ -167,22 +175,6 @@ options.testSlidingWindowSize = 16
 ---------------------------------------
 -- Utilities
 ---------------------------------------
--- Initialize a sliding window depending on hyperparameters
-local function getSlidingWindow(hyperParams)
-   local function batchSlidingWindow(x) return x end
-
-   local parameters = moduleSequencerSlidingWindow.getParameters(hyperParams)
-   -- Smaller-sized sliding window over a batch of long examples
-   local slidingWindow = nn.SequencerSlidingWindow(
-      1, parameters.slidingWindowSize, parameters.slidingWindowStep)
-   do
-      batchSlidingWindow = function(minibatch)
-	 return slidingWindow:forward(minibatch)
-      end
-   end
-   return batchSlidingWindow
-end
-
 -- Extract only actual predictions from a batch of examples
 -- Sequence loader returns targets as simply offset versions of their data
 -- counterpart, this extracts the predictionLength tail of those sequences
@@ -248,6 +240,9 @@ local f_load = msds.load.get_btchromas
 
 -- local _, filenamesSets = ts_init.import_data(baseDir, setList, options)
 local filter_suffix = '.dat'
+if filter_suffix ~= '.dat' then
+   print('WARNING: computing chromagrams, prefer usage of .dat files if possible')
+end
 
 local datasetPath, datasetSets
 local useSubset = false
@@ -406,7 +401,7 @@ if options.manualMode then
    nbNetworks = 1
    nbRandom = 1
 
-   models = {modelLSTM}
+   models = {modelRNN}
    criterions = {nn.MSECriterion}
 end
 
@@ -486,16 +481,15 @@ for k, v in ipairs(models) do
 	    structure.maxLayerSize = 128
 	 end
 
-	 -- Register external parameters for sliding window
-	 moduleSequencerSlidingWindow.registerParameters(hyperParams)
-	 
-	 curModel:registerStructure(hyperParams, nbLayers,
-				    structure.minLayerSize, structure.maxLayerSize);
-	 -- Register model-specific options (e.g. non-linarity used)
-	 curModel:registerOptions(hyperParams, options.fastRun)
-	 -- Initialize hyperparameters structure
-	 hyperParams:initStructure(nbNetworks, #setList, nbRepeat, nbSteps, nbBatch);
-	 
+	 if not options.manualMode then
+	    curModel:registerStructure(hyperParams, nbLayers,
+				       structure.minLayerSize, structure.maxLayerSize);
+	    -- Register model-specific options (e.g. non-linarity used)
+	    curModel:registerOptions(hyperParams, options.fastRun)
+	    -- Initialize hyperparameters structure
+	    hyperParams:initStructure(nbNetworks, #setList, nbRepeat, nbSteps, nbBatch);
+	 end
+
 	 -- Optimization step
 	 print('Start hyperparameters optimization loop')
 	 for step = 1,nbSteps do
@@ -529,11 +523,25 @@ for k, v in ipairs(models) do
 		     collectgarbage(); collectgarbage()
 		     model = curModel:defineModel(structure, options);
 
-		     local fullManual = true
-		     local savedLoad = true
+		     local fullManual = false
 		     if options.manualMode and fullManual then
 			model = nil
-			if not savedLoad then
+			if options.modelUniform then
+			   -- Uniform sampling
+			   require './moduleUniform.lua'
+			   local modelUniform = nn.Uniform(structure.nOutputs, structure.nFeats, options)
+			   model = modelUniform
+			   shortModelName = 'modelUniform'
+			elseif options.modelRepeat then
+			   -- Memory-less repeat module
+			   require './moduleRepeat.lua'
+			   local modelRepeat = nn.Repeat(structure.nOutputs, options)
+			   model = modelRepeat
+			   shortModelName = 'modelRepeat'
+			elseif options.loadModel~='' then
+			   model = torch.load(options.loadModel)
+			   shortModelName = 'reloaded_model'
+			else
 			   model = nn.Sequential()
 			   
 			   model:add(nn.Transpose({1, 2}))
@@ -553,14 +561,10 @@ for k, v in ipairs(models) do
 			   model:add(nn.View(-1, structure.nOutputs, structure.nFeats))
 			   model:add(nn.Transpose({1, 2}))
 			   
+			   -- TODO Should add Initializer
+			   
 			   shortModelName = 'manually_designed-model-mlp'
-			else
-			   model = torch.load('/home/aciditeam/results/models/' ..
-						 '20160901-223648-model_1-modelLSTM-nn_MSECriterion-' ..
-						 'trained_model.dat')
-			   shortModelName = 'reloaded-20160901-223648-modelLSTM'
 			end
-			-- shortModelName = 'model_' .. k .. '-' .. tostring(curModel)
 			mainSaveLocation = savePrefix .. shortModelName .. '-' ..
 			   shortCriterionName
 		     end
@@ -573,7 +577,7 @@ for k, v in ipairs(models) do
 		     -- Activate CUDA on the model
 		     if options.cuda then model:cuda(); end
 		     
-		     if not(fullManual and savedLoad) then
+		     if not(options.manualMode and fullManual) then
 			model = curModel:weightsInitialize(model)
 		     end
 		     print('Current model:')
@@ -594,8 +598,6 @@ for k, v in ipairs(models) do
 					       ':\n' .. fullModelString .. '\n\n')
 			fd_structures:flush()
 		     end
-		     
-		     local batchSlidingWindow = getSlidingWindow(hyperParams)
 		     
 		     local validIncreasedEpochs, initialValidError, minValidErr 
 		     if options.printValidation then
@@ -638,6 +640,7 @@ for k, v in ipairs(models) do
 		     -- Perform SGD on this subset of the dataset
 		     print('Start loop on dataset windows')
 		     for datasetEpoch = 1, nbTrainEpochs do
+			if options.testOnly then break end
 			if isNaNError then break end
 			print('Current training epoch: ' .. datasetEpoch .. ' of ' .. nbTrainEpochs)
 			-- Perform sliding window over the training dataset (too large to fit in memory)
