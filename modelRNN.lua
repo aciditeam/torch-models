@@ -61,7 +61,7 @@ end
 local modelRNN, parent = torch.class('modelRNN', 'modelClass')
 
 function modelRNN:defineModel(structure, options)
-   local verbose = true  -- set to true for debug
+   -- local verbose = true  -- set to true for debug
    local function addPrint(model, ...)
       if verbose then model:add(nn.Printer(...)) end
    end
