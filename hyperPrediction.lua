@@ -89,7 +89,7 @@ cmd:option('--smallTrainSet', false, 'whether to use a smaller training set for 
 cmd:option('--manualMode', false, 'whether to disable hyper-optimization and train only on a chosen structure')
 cmd:option('--loadModel', '', 'select a previously stored model to further train or test (implies --manualMode)')
 cmd:option('--testOnly', false, 'only perform computation of test error, no training' ..
-	      '\n(implies --manualMode, requires --loadModel)')
+	      '\n(implies --manualMode)')
 cmd:option('--modelUniform', false, 'use uniform sampling as prediction model')
 cmd:option('--modelRepeat', false, 'use memoryless repeat as prediction model')
 
@@ -401,7 +401,7 @@ if options.manualMode then
    nbNetworks = 1
    nbRandom = 1
 
-   models = {modelRNN}
+   models = {modelLSTM}
    criterions = {nn.MSECriterion}
 end
 
@@ -464,7 +464,7 @@ for k, v in ipairs(models) do
 	 -- Manual initialization
 	 if options.manualMode then
 	    -- Input chosen parameters here for manual training
-	    structure.nLayers = 3
+	    structure.nLayers = 1
 	    structure.layers = {1024, 1024, 512, 256};
 	    structure.convSize = {16, 32, 64};
 	    structure.kernelWidth = {8, 8, 8};
@@ -577,7 +577,7 @@ for k, v in ipairs(models) do
 		     -- Activate CUDA on the model
 		     if options.cuda then model:cuda(); end
 		     
-		     if not(options.manualMode and fullManual) then
+		     if not(options.manualMode and fullManual or options.loadModel) then
 			model = curModel:weightsInitialize(model)
 		     end
 		     print('Current model:')
