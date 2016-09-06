@@ -7,6 +7,12 @@ require '../../modelLSTM.lua'
 local ts_init = require '../../TSInitialize.lua'
 local _ = require 'moses'
 
+cmd = torch.CmdLine()
+cmd:option('--loadModel', '', 'path to previously trained model')
+cmd:option('--useCuda', false, 'whether to activate CUDA')
+
+cmd_params = cmd:parse(arg)
+
 local music = require '../../music.lua/music.lua'
 local harmonic = require './harmonic.lua'
 
@@ -14,24 +20,32 @@ local M = {}
 
 local criterion = nn.MSECriterion()
 
-local useCuda = false
+local useCuda = cmd_params.useCuda
 local nInputs = 128  -- Duration of input sequences for the considered models
 local paddingValue = 0
 local featSize = 12
 
-local function makePrediction(model, inputSequence, predictionLength)
+local function makePrediction(model, inputSequence, predictionLength, repeatInput)
+   local repeatInput = repeatInput or true
+
    local function pad(sequence)
       local sequenceDuration = sequence:size(1)
       
       if sequenceDuration < nInputs then
-	 -- Sequence is shorter than the input size: add silence at the beginning
-	 local deltaDuration = nInputs - sequenceDuration
-
-	 local padding = torch.Tensor(deltaDuration, featSize)
-	 padding:fill(paddingValue)
-	 
-	 local paddedSequence = padding:cat(sequence, 1)
-	 return paddedSequence
+	 if repeatInput and nInputs > 2*sequenceDuration then
+	    nRepeats = math.floor(nInputs / sequenceDuration)
+	    local sizes = torch.LongStorage({nRepeats, 1})
+	    return pad(inputSequence:repeatTensor(sizes))
+	 else
+	    -- Sequence is shorter than the input size: add silence at the beginning
+	    local deltaDuration = nInputs - sequenceDuration
+	    
+	    local padding = torch.Tensor(deltaDuration, featSize)
+	    padding:fill(paddingValue)
+	    
+	    local paddedSequence = padding:cat(sequence, 1)
+	    return paddedSequence
+	 end
       else
 	 return sequence
       end
@@ -43,12 +57,13 @@ local function makePrediction(model, inputSequence, predictionLength)
    end
    
    local inputSequence = pad(inputSequence):view(nInputs, 1, featSize)
-   if options.cuda then inputSequence:cuda() end
+   if options.cuda then inputSequence = inputSequence:cuda() end
+   print(inputSequence)
    local output = model:forward(inputSequence)
-   print(output)
    
    for i=2, predictionLength do
       local inputAcc = addPredictionShift(inputSequence, output)
+      print(inputAcc)
       
       local newPredictionStep = model:forward(inputAcc)
       print(newPredictionStep)
@@ -59,10 +74,11 @@ local function makePrediction(model, inputSequence, predictionLength)
 end
 
 function M.testModel(model, inputSequence, target, testDescription,
-			 predictionLength)
+		     predictionLength)
    local predictionLength = predictionLength or 1
    
-   local output = makePrediction(model, inputSequence, predictionLength)
+   local output = makePrediction(model, inputSequence, predictionLength, true)
+   if useCuda then target = target:cuda() end
    local err = criterion:forward(output, target)
 
    print(testDescription)
@@ -92,7 +108,7 @@ local EMinScale = music.scale('E', music.scales.minor)
 
 -- This sequence is 4*CMaj followed by 4*GMaj 
 local alternatingChords = makeSequenceScaleDegrees(
-   {1, 5, 1, 5, 1, 5, 1, 5, },
+   {1, 5, 1, 5, },
    EMinScale)
 
 local alternateTest_simple_description = "Simple, 'abababab' -> 'a', 1-step memory test"
@@ -168,11 +184,20 @@ local A7 = seventhChordDegree(1, AMajScale)
 local D7 = seventhChordDegree(4, AMajScale)
 local E7 = seventhChordDegree(5, AMajScale)
 
-local ABluesGrid = harmonic.compose.sequence(
-   {A7, A7, A7, A7,
-    D7, D7, A7, A7,
-    E7, D7, A7, E7,
-    A7})
+-- local ABluesGrid = harmonic.compose.sequence(
+--    {A7, A7, A7, A7,
+--     D7, D7, A7, A7,
+--     E7, D7, A7, E7, })
+
+local degreesBluesGrid = {1, 1, 1, 1, 4, 4, 1, 1, 5, 4, 1, 5}
+local ABluesGrid = makeSequenceScaleDegrees(degreesBluesGrid, AMajScale)
+
+local bluesTest_simple_description = "Model should predict start of new grid, i.e. degree I, i.e. A"
+local bluesTest_simple_target = makeSequenceScaleDegrees({1}, CMajScale)
+function M.makeBluesTest_simple(model)
+   M.testModel(model, ABluesGrid, bluesTest_simple_target,
+	       bluesTest_simple_description)
+end
 
 -- Define or load a model
 local options = ts_init.get_options(useCuda)
@@ -181,27 +206,17 @@ options.cuda = useCuda
 
 ts_init.set_cuda(options)
 
-local modelPath = nil
-local model
-if modelPath then
-   model = torch.load(modelPath)
-else
-   local structure = {}
-   structure.nLayers = 1
-   structure.layers = {128, 1024, 512};
-   structure.nInputs = 128
-   structure.nFeats = 12
-   structure.nOutputs = 1  -- Output only predictions	 
+model = torch.load(cmd_params.loadModel)
 
-   curModel = modelLSTM()
+model:evaluate()
 
-   model = curModel:defineModel(structure, options)
+for i=1,10000 do
+   print(model:forward(torch.rand(128, 12):cuda()))
 end
-
-print(model)
 
 if options.cuda then model:cuda(); criterion:cuda() end
 
+M.makeBluesTest_simple(model)
 M.makeAlternateTest_double(model)
 
 return M
